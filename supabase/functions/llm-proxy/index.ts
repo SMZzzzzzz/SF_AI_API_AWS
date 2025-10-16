@@ -54,8 +54,9 @@ serve(async (req: Request) => {
   // 環境変数を取得
   const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") || "";
   const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY") || "";
-  const SUPABASE_URL = Deno.env.get("DATABASE_URL") || "";
-  const SUPABASE_ANON_KEY = Deno.env.get("DATABASE_ANON_KEY") || "";
+  const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || Deno.env.get("DATABASE_URL") || "";
+  const SUPABASE_ANON_KEY =
+    Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("DATABASE_ANON_KEY") || "";
   const MODEL_MAP_URL = Deno.env.get("MODEL_MAP_URL") || "";
   const LOG_MASK_PII = Deno.env.get("LOG_MASK_PII") === "true";
   const RATE_LIMIT_QPM = parseInt(Deno.env.get("RATE_LIMIT_QPM") || "60");

@@ -39,9 +39,12 @@ async function forwardToLLMProxy(req: Request): Promise<Response> {
       bodyKeys: Object.keys(body)
     });
 
-    // llm-proxy-openaiエンドポイントに転送
-    const targetUrl = `https://ndiwsfzozeudtenshwgx.supabase.co/functions/v1/llm-proxy-openai`;
-    
+    // llm-proxy-openaiエンドポイントに転送（ENV優先、なければ同一オリジンへ）
+    const envTarget = Deno.env.get("LLM_PROXY_OPENAI_URL");
+    const urlObj = new URL(req.url);
+    const defaultTarget = `${urlObj.origin}/functions/v1/llm-proxy-openai`;
+    const targetUrl = (envTarget && envTarget.trim().length > 0) ? envTarget : defaultTarget;
+
     console.log("Forwarding to:", targetUrl);
     
     const response = await fetch(targetUrl, {

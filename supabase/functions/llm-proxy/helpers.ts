@@ -146,6 +146,7 @@ export function calculateCost(
     "gpt-4-turbo": { input: 0.01, output: 0.03 },
     "claude-3-5-sonnet-20240620": { input: 0.003, output: 0.015 },
     "claude-3-5-haiku": { input: 0.00025, output: 0.00125 },
+    "claude-3-5-haiku-20241022": { input: 0.00025, output: 0.00125 },
   };
 
   const modelPricing = pricing[model] || { input: 0.001, output: 0.002 };
