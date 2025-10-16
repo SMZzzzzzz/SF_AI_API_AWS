@@ -78,23 +78,21 @@ supabase secrets set ALLOW_ORIGINS=*
 ### 5️⃣ デプロイ！
 
 ```bash
-# Edge Functionをデプロイ
-supabase functions deploy llm-proxy
+# Edge Functionをデプロイ（OpenAI互換）
+supabase functions deploy llm-proxy-openai
 
 # ✅ デプロイ完了！
-# エンドポイント: https://your-project.supabase.co/functions/v1/llm-proxy
+# エンドポイント: https://your-project.supabase.co/functions/v1/llm-proxy-openai
 ```
 
 ## 🧪 動作確認
 
 ```bash
-curl -X POST https://your-project.supabase.co/functions/v1/llm-proxy \
+curl -X POST https://your-project.supabase.co/functions/v1/llm-proxy-openai \
   -H "Content-Type: application/json" \
   -d '{
-    "role": "backend",
-    "messages": [{"role": "user", "content": "Hello!"}],
-    "user_id": "test-user",
-    "project_id": "test-project"
+    "model": "backend",
+    "messages": [{"role": "user", "content": "Hello!"}]
   }'
 ```
 
@@ -147,7 +145,7 @@ A: URLが正しいか確認。ブラウザでURLを開いてJSONが表示され�
 
 ```bash
 supabase secrets set RATE_LIMIT_QPM=100
-supabase functions deploy llm-proxy
+supabase functions deploy llm-proxy-openai
 ```
 
 ### Q: ログが保存されない
@@ -213,13 +211,13 @@ supabase functions deploy llm-proxy
 
 ```bash
 supabase secrets set LOG_MASK_PII=false
-supabase functions deploy llm-proxy
+supabase functions deploy llm-proxy-openai
 ```
 
 ## 📞 サポート
 
 問題が発生した場合:
-1. ログを確認: `supabase functions logs llm-proxy`
+1. ログを確認: `supabase functions logs llm-proxy-openai`
 2. ドキュメントを確認: [DEPLOYMENT.md](DEPLOYMENT.md)
 3. Issueを作成: GitHub Issues
 

@@ -9,15 +9,15 @@ import {
   LLMRequest,
   ModelConfig,
   ModelMap,
-} from "../llm-proxy/types.ts";
+} from "../lib/types.ts";
 import {
   maskPII,
   getCorsHeaders,
   fetchModelMap,
   calculateCost,
-} from "../llm-proxy/helpers.ts";
-import { callLLM, extractTokens } from "../llm-proxy/providers.ts";
-import { saveLog } from "../llm-proxy/logger.ts";
+} from "../lib/helpers.ts";
+import { callLLM, extractTokens } from "../lib/providers.ts";
+import { saveLog } from "../lib/logger.ts";
 
 // レート制限用のメモリキャッシュ
 const rateLimitCache = new Map<string, number[]>();

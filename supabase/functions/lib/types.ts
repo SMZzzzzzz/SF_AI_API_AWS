@@ -1,5 +1,5 @@
 /**
- * 型定義
+ * 型定義（共有）
  */
 
 export interface LLMRequest {

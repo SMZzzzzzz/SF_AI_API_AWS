@@ -15,13 +15,13 @@ echo 2. プロジェクトにリンク...
 %SUPABASE_CLI% link --project-ref %PROJECT_REF%
 
 echo 3. Edge Functionをデプロイ...
-%SUPABASE_CLI% functions deploy llm-proxy
+%SUPABASE_CLI% functions deploy llm-proxy-openai
 
 echo 4. デプロイ確認...
 %SUPABASE_CLI% functions list
 
 echo.
 echo デプロイ完了！
-echo エンドポイント: https://%PROJECT_REF%.supabase.co/functions/v1/llm-proxy
+echo エンドポイント: https://%PROJECT_REF%.supabase.co/functions/v1/llm-proxy-openai
 echo.
 pause

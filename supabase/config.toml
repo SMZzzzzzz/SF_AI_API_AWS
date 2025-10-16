@@ -38,9 +38,6 @@ double_confirm_changes = true
 enable_confirmations = false
 
 # Edge Functionsの設定
-[functions.llm-proxy]
-verify_jwt = false
-
 [functions.llm-proxy-openai]
 verify_jwt = false
 

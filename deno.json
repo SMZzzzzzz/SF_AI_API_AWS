@@ -1,6 +1,6 @@
 {
   "tasks": {
-    "serve": "deno run --allow-net --allow-env --watch supabase/functions/llm-proxy/index.ts"
+    "serve": "deno run --allow-net --allow-env --watch supabase/functions/llm-proxy-openai/index.ts"
   },
   "compilerOptions": {
     "lib": ["deno.ns", "deno.unstable"],

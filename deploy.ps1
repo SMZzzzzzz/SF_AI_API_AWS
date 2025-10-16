@@ -18,14 +18,14 @@ try {
     & $SUPABASE_CLI link --project-ref $PROJECT_REF
     
     Write-Host "3. Edge Functionをデプロイ..." -ForegroundColor Yellow
-    & $SUPABASE_CLI functions deploy llm-proxy
+    & $SUPABASE_CLI functions deploy llm-proxy-openai
     
     Write-Host "4. デプロイ確認..." -ForegroundColor Yellow
     & $SUPABASE_CLI functions list
     
     Write-Host ""
     Write-Host "デプロイ完了！" -ForegroundColor Green
-    Write-Host "エンドポイント: https://$PROJECT_REF.supabase.co/functions/v1/llm-proxy" -ForegroundColor Cyan
+    Write-Host "エンドポイント: https://$PROJECT_REF.supabase.co/functions/v1/llm-proxy-openai" -ForegroundColor Cyan
     
 } catch {
     Write-Host "エラーが発生しました: $($_.Exception.Message)" -ForegroundColor Red
@@ -37,5 +37,5 @@ try {
     Write-Host "4. 以下のコマンドを実行:" -ForegroundColor White
     Write-Host "   .\supabase.exe login" -ForegroundColor Gray
     Write-Host "   .\supabase.exe link --project-ref YOUR_PROJECT_REF" -ForegroundColor Gray
-    Write-Host "   .\supabase.exe functions deploy llm-proxy" -ForegroundColor Gray
+    Write-Host "   .\supabase.exe functions deploy llm-proxy-openai" -ForegroundColor Gray
 }

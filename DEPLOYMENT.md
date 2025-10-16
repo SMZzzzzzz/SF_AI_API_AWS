@@ -150,14 +150,14 @@ supabase secrets list
 
 ## 🚀 ステップ5: Edge Functionのデプロイ
 
-### 5.1 デプロイ実行
+### 5.1 デプロイ実行（OpenAI互換）
 
 ```bash
 # プロジェクトルートで実行
-supabase functions deploy llm-proxy
+supabase functions deploy llm-proxy-openai
 
 # デプロイ成功すると、エンドポイントURLが表示されます
-# https://your-project-ref.supabase.co/functions/v1/llm-proxy
+# https://your-project-ref.supabase.co/functions/v1/llm-proxy-openai
 ```
 
 ### 5.2 デプロイ確認
@@ -172,16 +172,14 @@ supabase functions list
 ### 6.1 cURLでテスト
 
 ```bash
-curl -X POST https://your-project-ref.supabase.co/functions/v1/llm-proxy \
+curl -X POST https://your-project-ref.supabase.co/functions/v1/llm-proxy-openai \
   -H "Content-Type: application/json" \
   -d '{
-    "role": "backend",
+    "model": "backend",
     "messages": [
       {"role": "system", "content": "You are a helpful assistant."},
       {"role": "user", "content": "Hello!"}
     ],
-    "user_id": "test-user",
-    "project_id": "test-project",
     "temperature": 0.7,
     "max_tokens": 100
   }'
@@ -263,7 +261,7 @@ supabase storage cp model_map.json config/model_map.json --upsert
 
 ```bash
 # 変更後、再デプロイ
-supabase functions deploy llm-proxy
+supabase functions deploy llm-proxy-openai
 ```
 
 ### 環境変数の変更
@@ -273,7 +271,7 @@ supabase functions deploy llm-proxy
 supabase secrets set RATE_LIMIT_QPM=100
 
 # 再デプロイ（環境変数変更を反映）
-supabase functions deploy llm-proxy
+supabase functions deploy llm-proxy-openai
 ```
 
 ## ⚠️ トラブルシューティング
@@ -282,14 +280,14 @@ supabase functions deploy llm-proxy
 
 ```bash
 # 詳細ログを確認
-supabase functions deploy llm-proxy --debug
+supabase functions deploy llm-proxy-openai --debug
 ```
 
 ### 実行時エラー
 
 ```bash
 # リアルタイムログ確認
-supabase functions logs llm-proxy --follow
+supabase functions logs llm-proxy-openai --follow
 ```
 
 ### データベース接続エラー
