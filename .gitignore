@@ -1,0 +1,40 @@
+# 環境変数
+.env
+.env.local
+.env.*.local
+env.txt
+
+# Supabase
+.supabase/
+supabase/.temp/
+
+# Node modules
+node_modules/
+package-lock.json
+yarn.lock
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ビルド成果物
+dist/
+build/
+*.log
+
+# テンポラリ
+*.tmp
+.cache/
+
+# APIキーなど機密情報
+deploy-with-token.bat
+*.key
+*.pem
+

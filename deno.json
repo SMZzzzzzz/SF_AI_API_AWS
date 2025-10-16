@@ -1,0 +1,20 @@
+{
+  "tasks": {
+    "serve": "deno run --allow-net --allow-env --watch supabase/functions/llm-proxy/index.ts"
+  },
+  "compilerOptions": {
+    "lib": ["deno.ns", "deno.unstable"],
+    "strict": true,
+    "target": "ES2022"
+  },
+  "fmt": {
+    "charset": "utf8",
+    "indentWidth": 2,
+    "lineWidth": 100,
+    "proseWrap": "preserve",
+    "semiColons": true,
+    "singleQuote": false,
+    "useTabs": false
+  }
+}
+

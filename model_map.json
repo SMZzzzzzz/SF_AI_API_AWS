@@ -1,0 +1,27 @@
+{
+  "frontend": {
+    "provider": "openai",
+    "model": "gpt-4o-mini"
+  },
+  "backend": {
+    "provider": "anthropic",
+    "model": "claude-3-5-sonnet-20240620"
+  },
+  "infra": {
+    "provider": "openai",
+    "model": "gpt-4-turbo"
+  },
+  "qa": {
+    "provider": "anthropic",
+    "model": "claude-3-5-haiku-20241022"
+  },
+  "data": {
+    "provider": "openai",
+    "model": "gpt-4o"
+  },
+  "_default": {
+    "provider": "openai",
+    "model": "gpt-4o-mini"
+  }
+}
+
