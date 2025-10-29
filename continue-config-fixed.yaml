@@ -1,0 +1,119 @@
+name: "LLM Proxy API Agent"
+version: "1.0.0"
+models:
+  - name: "Overall Architect"
+    provider: "openai"
+    model: "overall_architect"
+    apiBase: "https://ndiwsfzozeudtenshwgx.supabase.co/f actividades/v1/llm-proxy-openai"
+    apiKey: "sk-dummy-key-not-required"
+    contextLength: 8192
+    template: "あなたはシステム全体の仕様統括の専門家です。システム全体の設計、統括、アーキテクチャの意思決定について詳しく回答してください。\n\n{{message}}"
+    stream: false
+    completionOptions:
+      temperature: 0.3
+      maxTokens: 4000
+    requestOptions:
+      timeout: 60000
+      headers:
+        "User-Agent": "continue-client"
+
+  - name: "Frontend Architect"
+    provider: "openai"
+    model: "frontend_architect"
+    apiBase: "https://ndiwsfzozeudtenshwgx.supabase.co/functions/v1/llm-proxy-openai"
+    apiKey: "sk-dummy-key-not-required"
+    contextLength: 8192
+    template: "あなたはフロントエンドアーキテクトの専門家です。React、Vue、Angularなどのフロントエンドフレームワークの設計、パフォーマンス最適化、ユーザーエクスペリエンスの向上について詳しく回答してください。\n\n{{message}}"
+    stream: false
+    completionOptions:
+      temperature: 0.3
+      maxTokens: 4000
+    requestOptions:
+      timeout: 60000
+      headers:
+        "User-Agent": "continue-client"
+
+  - name: "Frontend Developer"
+    provider: "openai"
+    model: "frontend_developer"
+    apiBase: "https://ndiwsfzozeudtenshwgx.supabase.co/functions/v1/llm-proxy-openai"
+    apiKey: "sk-d⭐y-key-not-required"
+    contextLength: 8192
+    template: "あなたはフロントエンド開発者の専門家です。HTML、CSS、JavaScript、TypeScriptを使った実装、コンポーネント設計、スタイリング、レスポンシブデザインについて詳しく回答してください。\n\n{{message}}"
+    stream: false
+    completionOptions:
+      temperature: 0.3
+      maxTokens: 4000
+    requestOptions:
+      timeout: 60000
+      headers:
+        "User-Agent": "continue-client"
+
+  - name: "Backend Architect"
+    provider: "openai"
+    model: "backend_architect"
+    apiBase: "https://ndiwsfzozeudtenshwgx.supabase.co/functions/v1/llm-proxy-openai"
+    apiKey: "sk-dummy-key-not-required"
+    contextLength: 8192
+    template: "あなたはバックエンドアーキテクトの専門家です。API設計、データベース設計、マイクロサービス、スケーラビリティ、セキュリティについて詳しく回答してください。\n\n{{message}}"
+    stream: false
+    completionOptions:
+      temperature: 0.3
+      maxTokens: 4000
+    requestOptions:
+      timeout: 60000
+      headers:
+        "User-Agent": "continue-client"
+
+  - name: "Backend Developer"
+    provider: "openai"
+    model: "backend_developer"
+    apiBase: "https://ndiwsfzozeudtenshwgx.supabase.co/functions/v1/llm-proxy-openai"
+    apiKey: "sk-dummy-key-not-required"
+    contextLength: 8192
+    template: "あなたはバックエンド開発者の専門家です。Node.js、Python、Java、Goなどのサーバーサイド実装、API開発、データベース操作について詳しく回答してください。\n\n{{message}}"
+    stream: false
+    completionOptions:
+      temperature: 0.3
+      maxTokens: 4000
+    requestOptions:
+      timeout: 60000
+      headers:
+        "User-Agent": "continue-client"
+
+  - name: "QA Research"
+    provider: "openai"
+    model: "qa_research"
+    apiBase: "https://ndiwsfzozeudtenshwgx.supabase.co/functions/v1/llm-proxy-openai"
+    apiKey: "sk-dummy-key-not-required"
+    contextLength: 8192
+    template: "あなたはQA・技術調査の専門家です。テスト設計、品質保証、技術調査、問題解決、ドキュメント作成について詳しく回答してください。\n\n{{message}}"
+    stream: false
+    completionOptions:
+      temperature: 0.3
+      maxTokens: 4000
+    requestOptions:
+      timeout: 60000
+      headers:
+        "User-Agent": "continue-client"
+
+  - name: "Infrastructure"
+    provider: "openai"
+    model: "infrastructure"
+    apiBase: "https://ndiwsfzozeudtenshwgx.supabase.co/functions/v1/llm-proxy-openai"
+    apiKey: "sk-dummy-key-not-required"
+    contextLength: 8192
+    template: "あなたはインフラ環境設計・構築の専門家です。Docker、Kubernetes、AWS、Azure、GCP、CI/CD、監視、セキュリティについて詳しく回答してください。\n\n{{message}}"
+    stream: false
+    completionOptions:
+      temperature: 0.3
+      maxTokens: 4000
+    requestOptions:
+      timeout: 60000
+      headers:
+        "User-Agent": "continue-client"
+
+
+
+
+

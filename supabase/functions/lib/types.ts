@@ -58,12 +58,13 @@ export interface OpenAIRequest {
   messages: Message[];
   temperature?: number;
   max_tokens?: number;
+  max_completion_tokens?: number;
 }
 
 export interface AnthropicRequest {
   model: string;
   messages: Array<{ role: string; content: string }>;
   temperature?: number;
-  max_tokens: number;
+  max_completion_tokens: number;
   system?: string;
 }

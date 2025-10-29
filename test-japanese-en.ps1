@@ -39,3 +39,11 @@ try {
 
 Write-Host ""
 Write-Host "Check Supabase logs to see if the Japanese message was preserved." -ForegroundColor Yellow
+
+
+
+
+
+
+
+

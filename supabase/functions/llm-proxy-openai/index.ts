@@ -61,7 +61,7 @@ function createOpenAIErrorResponse(
   };
 
   const headers = allowedOrigins 
-    ? getCorsHeaders(origin, allowedOrigins)
+    ? getCorsHeaders(origin || null, allowedOrigins)
     : new Headers({ "Content-Type": "application/json" });
 
   return new Response(JSON.stringify(errorResponse), {
@@ -140,45 +140,53 @@ serve(async (req: Request) => {
     const model = openAIBody.model || "gpt-4o";
     const messages = openAIBody.messages || [];
     const temperature = openAIBody.temperature || 0.7;
-    const max_tokens = openAIBody.max_tokens || 2000;
     
     // user_idとproject_idを生成（OpenAIリクエストにはないため）
     const user_id = openAIBody.user || "openai-user";
     const project_id = "openai-project";
 
-    // 役割判定（複数の方法をサポート）
-    let role = "backend";
+    // max_tokensを取得（後でactualModelに応じて調整）
+    const max_tokens = openAIBody.max_tokens || 2000;
     
-    // 方法1: モデル名からロールを推測
-    if (model.includes("frontend") || model.includes("react") || model.includes("vue") || model.includes("ui")) {
-      role = "frontend";
-    } else if (model.includes("devops") || model.includes("infrastructure") || model.includes("deploy")) {
-      role = "devops";
-    } else if (model.includes("qa") || model.includes("test") || model.includes("testing")) {
-      role = "qa";
+    // streamパラメータを取得
+    const stream = openAIBody.stream || false;
+
+    // 役割判定（複数の方法をサポート）
+    // モデル名を直接ロール名として扱う（backend -> backend_developerなど）
+    let role = model;
+    
+    // 方法1: モデル名をロール名に変換
+    if (model === "backend" || model === "server") {
+      role = "backend_developer";
+    } else if (model === "frontend" || model.includes("frontend") || model.includes("react") || model.includes("vue") || model.includes("ui")) {
+      role = "frontend_developer";
+    } else if (model === "qa" || model.includes("qa") || model.includes("test") || model.includes("testing")) {
+      role = "qa_research";
+    } else if (model === "devops" || model.includes("devops") || model.includes("infrastructure") || model.includes("deploy")) {
+      role = "infrastructure";
     } else if (model.includes("data") || model.includes("analytics") || model.includes("ml")) {
-      role = "data";
-    } else if (model.includes("backend") || model.includes("api") || model.includes("server")) {
-      role = "backend";
+      role = "qa_research"; // dataロールがない場合のフォールバック
+    } else if (model.includes("backend") || model.includes("api")) {
+      role = "backend_developer";
     }
     
     // 方法2: プロンプト内の役割指示を検出
     const firstMessage = messages[0]?.content || "";
     if (firstMessage.includes("@backend") || firstMessage.includes("@server")) {
-      role = "backend";
+      role = "backend_developer";
     } else if (firstMessage.includes("@frontend") || firstMessage.includes("@ui") || firstMessage.includes("@react")) {
-      role = "frontend";
+      role = "frontend_developer";
     } else if (firstMessage.includes("@devops") || firstMessage.includes("@infrastructure")) {
-      role = "devops";
+      role = "infrastructure";
     } else if (firstMessage.includes("@qa") || firstMessage.includes("@test")) {
-      role = "qa";
+      role = "qa_research";
     } else if (firstMessage.includes("@data") || firstMessage.includes("@analytics")) {
-      role = "data";
+      role = "qa_research"; // dataロールがない場合のフォールバック
     }
     
     // 方法3: カスタムヘッダーで役割を指定（オプション）
     const customRole = req.headers.get("x-role");
-    if (customRole && ["backend", "frontend", "devops", "qa", "data"].includes(customRole)) {
+    if (customRole && ["backend_developer", "frontend_developer", "infrastructure", "qa_research"].includes(customRole)) {
       role = customRole;
     }
     
@@ -240,7 +248,11 @@ serve(async (req: Request) => {
 
     const { provider, model: actualModel } = modelConfig;
 
+    // GPT-5モデルの場合は推論トークンを考慮してmax_tokensを調整
+    const finalMaxTokens = actualModel.includes("gpt-5") ? Math.max(max_tokens, 4000) : max_tokens;
+
     console.log(`OpenAI API: model=${model} → role=${role} → ${provider}/${actualModel}`);
+    console.log(`DEBUG: provider=${provider}, actualModel=${actualModel}, max_tokens=${finalMaxTokens} (adjusted for GPT-5)`);
 
     // LLM APIを呼び出し
     let llmResponse: any;
@@ -253,7 +265,7 @@ serve(async (req: Request) => {
         OPENAI_API_KEY,
         ANTHROPIC_API_KEY,
         temperature,
-        max_tokens
+        finalMaxTokens
       );
     } catch (error) {
       console.error("LLM API error:", error);
@@ -377,6 +389,58 @@ serve(async (req: Request) => {
     const origin = req.headers.get("origin");
     const headers = getCorsHeaders(origin, ALLOW_ORIGINS);
 
+    // ストリーミング対応
+    if (stream) {
+      headers.set("Content-Type", "text/event-stream");
+      headers.set("Cache-Control", "no-cache");
+      headers.set("Connection", "keep-alive");
+
+      const encoder = new TextEncoder();
+      const modelForStream = openAIResponse.model || actualModel;
+      const createdTs = Math.floor(Date.now() / 1000);
+      const streamId = openAIResponse.id || `chatcmpl-${crypto.randomUUID()}`;
+
+      const streamResponse = new ReadableStream({
+        start(controller) {
+          const send = (obj: unknown) => {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
+          };
+
+          // 1) role 通知
+          send({
+            id: streamId,
+            object: "chat.completion.chunk",
+            created: createdTs,
+            model: modelForStream,
+            choices: [
+              { index: 0, delta: { role: "assistant" }, finish_reason: null },
+            ],
+          });
+
+          // 2) 本文チャンク
+          const content = openAIResponse?.choices?.[0]?.message?.content ?? "";
+          if (content) {
+            send({
+              id: streamId,
+              object: "chat.completion.chunk",
+              created: createdTs,
+              model: modelForStream,
+              choices: [
+                { index: 0, delta: { content }, finish_reason: null },
+              ],
+            });
+          }
+
+          // 3) 終端
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          controller.close();
+        },
+      });
+
+      return new Response(streamResponse, { status: 200, headers });
+    }
+
+    // 非ストリーミング（従来通り）
     return new Response(JSON.stringify(openAIResponse), {
       status: 200,
       headers,

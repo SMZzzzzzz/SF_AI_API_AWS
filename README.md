@@ -1,183 +1,94 @@
-# Supabase CLI
+# SF AI API - プロジェクト概要
 
-[![Coverage Status](https://coveralls.io/repos/github/supabase/cli/badge.svg?branch=main)](https://coveralls.io/github/supabase/cli?branch=main) [![Bitbucket Pipelines](https://img.shields.io/bitbucket/pipelines/supabase-cli/setup-cli/master?style=flat-square&label=Bitbucket%20Canary)](https://bitbucket.org/supabase-cli/setup-cli/pipelines) [![Gitlab Pipeline Status](https://img.shields.io/gitlab/pipeline-status/sweatybridge%2Fsetup-cli?label=Gitlab%20Canary)
-](https://gitlab.com/sweatybridge/setup-cli/-/pipelines)
+## 概要
 
-[Supabase](https://supabase.io) is an open source Firebase alternative. We're building the features of Firebase using enterprise-grade open source tools.
+Supabase Edge Functionsを使用したOpenAI互換LLMプロキシAPI。Continue IDE拡張機能と連携し、複数のLLMプロバイダー（OpenAI、Anthropic）を統一的に利用できる。
 
-This repository contains all the functionality for Supabase CLI.
+## 現在の状態
 
-- [x] Running Supabase locally
-- [x] Managing database migrations
-- [x] Creating and deploying Supabase Functions
-- [x] Generating types directly from your database schema
-- [x] Making authenticated HTTP requests to [Management API](https://supabase.com/docs/reference/api/introduction)
+✅ **SSEストリーミング実装完了**  
+✅ **デプロイ済み**  
+✅ **Continue UIで正常動作確認済み**  
 
-## Getting started
-
-### Install the CLI
-
-Available via [NPM](https://www.npmjs.com) as dev dependency. To install:
-
-```bash
-npm i supabase --save-dev
-```
-
-To install the beta release channel:
-
-```bash
-npm i supabase@beta --save-dev
-```
-
-When installing with yarn 4, you need to disable experimental fetch with the following nodejs config.
+## アーキテクチャ
 
 ```
-NODE_OPTIONS=--no-experimental-fetch yarn add supabase
+Continue IDE
+    ↓ (OpenAI互換API)
+Supabase Edge Function (llm-proxy-openai)
+    ↓ (ルーティング)
+OpenAI / Anthropic API
+    ↓ (レスポンス)
+Continue UI (SSEストリーミング)
 ```
 
-> **Note**
-For Bun versions below v1.0.17, you must add `supabase` as a [trusted dependency](https://bun.sh/guides/install/trusted) before running `bun add -D supabase`.
+## 主要ファイル
 
-<details>
-  <summary><b>macOS</b></summary>
+### Supabase Edge Functions
+- `supabase/functions/llm-proxy-openai/index.ts` - メインAPI
+- `supabase/functions/lib/` - 共通ライブラリ
+- `supabase/migrations/` - データベーススキーマ
 
-  Available via [Homebrew](https://brew.sh). To install:
+### 設定・ドキュメント
+- `docs/continue-config-reference.yaml` - Continue設定の参照
+- `docs/CONTINUE_SETUP.md` - Continueセットアップガイド
+- `docs/continue-troubleshooting.md` - トラブルシューティング
+- `model_map.json` - モデルマッピング設定
 
-  ```sh
-  brew install supabase/tap/supabase
-  ```
+### デプロイ・テスト
+- `deploy.ps1` - デプロイスクリプト
+- `test-*.ps1` - 各種テストスクリプト
 
-  To install the beta release channel:
-  
-  ```sh
-  brew install supabase/tap/supabase-beta
-  brew link --overwrite supabase-beta
-  ```
-  
-  To upgrade:
+## 重要な技術仕様
 
-  ```sh
-  brew upgrade supabase
-  ```
-</details>
+### SSEストリーミング
+- `stream: true`でServer-Sent Events形式
+- 3つのチャンク形式:
+  1. Role通知: `delta: { role: "assistant" }`
+  2. 本文: `delta: { content: "..." }`
+  3. 終端: `data: [DONE]`
 
-<details>
-  <summary><b>Windows</b></summary>
+### モデルマッピング
+- `backend_developer` → GPT-5-nano
+- `frontend_architect` → GPT-4o
+- `qa_research` → Claude-3.5-sonnet
+- など
 
-  Available via [Scoop](https://scoop.sh). To install:
+### ログ・監視
+- `ai_api_logs`テーブルに全リクエスト/レスポンスを記録
+- PIIマスキング対応
+- コスト計算機能
 
-  ```powershell
-  scoop bucket add supabase https://github.com/supabase/scoop-bucket.git
-  scoop install supabase
-  ```
+## セットアップ
 
-  To upgrade:
+1. **Supabaseプロジェクト設定**
+   ```bash
+   supabase login
+   supabase link --project-ref ndiwsfzozeudtenshwgx
+   ```
 
-  ```powershell
-  scoop update supabase
-  ```
-</details>
+2. **環境変数設定**
+   - `OPENAI_API_KEY`
+   - `ANTHROPIC_API_KEY`
+   - `SUPABASE_ANON_KEY`
 
-<details>
-  <summary><b>Linux</b></summary>
+3. **デプロイ**
+   ```powershell
+   .\deploy.ps1
+   ```
 
-  Available via [Homebrew](https://brew.sh) and Linux packages.
+4. **Continue設定**
+   - `docs/continue-config-reference.yaml`を参照
+   - `C:\Users\<USER>\.continue\config.yaml`にコピー
 
-  #### via Homebrew
+## トラブルシューティング
 
-  To install:
+- Continue UIに表示されない → `docs/continue-troubleshooting.md`
+- APIエラー → Supabase Functions ログを確認
+- SSE形式確認 → `docs/CONTINUE_SETUP.md`のテストコマンド
 
-  ```sh
-  brew install supabase/tap/supabase
-  ```
+## 更新履歴
 
-  To upgrade:
-
-  ```sh
-  brew upgrade supabase
-  ```
-
-  #### via Linux packages
-
-  Linux packages are provided in [Releases](https://github.com/supabase/cli/releases). To install, download the `.apk`/`.deb`/`.rpm`/`.pkg.tar.zst` file depending on your package manager and run the respective commands.
-
-  ```sh
-  sudo apk add --allow-untrusted <...>.apk
-  ```
-
-  ```sh
-  sudo dpkg -i <...>.deb
-  ```
-
-  ```sh
-  sudo rpm -i <...>.rpm
-  ```
-
-  ```sh
-  sudo pacman -U <...>.pkg.tar.zst
-  ```
-</details>
-
-<details>
-  <summary><b>Other Platforms</b></summary>
-
-  You can also install the CLI via [go modules](https://go.dev/ref/mod#go-install) without the help of package managers.
-
-  ```sh
-  go install github.com/supabase/cli@latest
-  ```
-
-  Add a symlink to the binary in `$PATH` for easier access:
-
-  ```sh
-  ln -s "$(go env GOPATH)/bin/cli" /usr/bin/supabase
-  ```
-
-  This works on other non-standard Linux distros.
-</details>
-
-<details>
-  <summary><b>Community Maintained Packages</b></summary>
-
-  Available via [pkgx](https://pkgx.sh/). Package script [here](https://github.com/pkgxdev/pantry/blob/main/projects/supabase.com/cli/package.yml).
-  To install in your working directory:
-
-  ```bash
-  pkgx install supabase
-  ```
-
-  Available via [Nixpkgs](https://nixos.org/). Package script [here](https://github.com/NixOS/nixpkgs/blob/master/pkgs/development/tools/supabase-cli/default.nix).
-</details>
-
-### Run the CLI
-
-```bash
-supabase bootstrap
-```
-
-Or using npx:
-
-```bash
-npx supabase bootstrap
-```
-
-The bootstrap command will guide you through the process of setting up a Supabase project using one of the [starter](https://github.com/supabase-community/supabase-samples/blob/main/samples.json) templates.
-
-## Docs
-
-Command & config reference can be found [here](https://supabase.com/docs/reference/cli/about).
-
-## Breaking changes
-
-We follow semantic versioning for changes that directly impact CLI commands, flags, and configurations.
-
-However, due to dependencies on other service images, we cannot guarantee that schema migrations, seed.sql, and generated types will always work for the same CLI major version. If you need such guarantees, we encourage you to pin a specific version of CLI in package.json.
-
-## Developing
-
-To run from source:
-
-```sh
-# Go >= 1.22
-go run . help
-```
+- 2025-01-29: SSEストリーミング実装完了、Continue UI表示問題解決
+- 2025-01-28: GPT-5対応、max_tokens調整
+- 2025-01-27: 初期実装、OpenAI互換API構築

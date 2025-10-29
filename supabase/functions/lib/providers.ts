@@ -8,8 +8,20 @@ export async function callOpenAI(
   maxTokens?: number,
 ): Promise<any> {
   const request: OpenAIRequest = { model, messages };
-  if (temperature !== undefined) request.temperature = temperature;
-  if (maxTokens !== undefined) request.max_tokens = maxTokens;
+  // GPT-5系ではtemperatureとmax_tokensパラメータが特殊
+  const isGPT5 = model.startsWith("gpt-5");
+  if (temperature !== undefined && !isGPT5) {
+    request.temperature = temperature;
+  }
+  // GPT-5系はmax_completion_tokensを使用、それ以外はmax_tokensを使用
+  if (maxTokens !== undefined) {
+    if (isGPT5) {
+      request.max_completion_tokens = maxTokens;
+    } else {
+      request.max_tokens = maxTokens;
+    }
+  }
+  console.log("OpenAI request:", JSON.stringify(request, null, 2));
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -41,16 +53,18 @@ export async function callAnthropic(
   const request: AnthropicRequest = {
     model,
     messages: anthropicMessages,
-    max_tokens: maxTokens || 4096,
+    max_completion_tokens: maxTokens || 4096,
   };
   if (systemMessage) request.system = systemMessage;
   if (temperature !== undefined) request.temperature = temperature;
+  
+  console.log("Anthropic request:", JSON.stringify(request, null, 2));
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
+      "anthropic-version": "2024-10-01",
     },
     body: JSON.stringify(request),
   });

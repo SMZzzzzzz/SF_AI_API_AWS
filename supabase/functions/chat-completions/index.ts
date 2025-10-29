@@ -161,7 +161,10 @@ serve(async (req: Request) => {
   });
 
   // Continueが期待する /chat/completions エンドポイントに対応
-  if (pathname.endsWith("/chat/completions") || pathname.endsWith("/chat-completions")) {
+  // Continueは apiBase + /chat/completions の形式でリクエストを送信
+  // chat-completions関数は /functions/v1/chat-completions でデプロイ
+  // しかし実際のリクエストパスは様々な可能性があるため、両方のパターンに対応
+  if (pathname.includes("/chat-completions") || pathname.includes("/chat/completions")) {
     // CORS対応（プリフライトリクエスト）
     if (req.method === "OPTIONS") {
       const origin = req.headers.get("origin");

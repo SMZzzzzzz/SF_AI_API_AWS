@@ -1,0 +1,50 @@
+﻿=== Extension Log Collection Instructions ===
+Date: 2025-10-17 11:30:17
+
+1. Open VS Code/Cursor
+2. Open Developer Tools (F12)
+3. Select Console tab
+4. Follow these steps to collect logs:
+
+=== Continue Extension ===
+- Send a question in Continue panel
+- Check error messages in Console
+- Select all (Ctrl+A) and copy (Ctrl+C)
+- Paste below the separator line
+
+--- Continue Extension Logs ---
+
+
+=== CodeGPT Extension ===
+- Send a question in CodeGPT panel
+- Check error messages in Console
+- Select all (Ctrl+A) and copy (Ctrl+C)
+- Paste below the separator line
+
+--- CodeGPT Extension Logs ---
+
+
+=== Cline Extension ===
+- Send a question in Cline panel
+- Check error messages in Console
+- Select all (Ctrl+A) and copy (Ctrl+C)
+- Paste below the separator line
+
+--- Cline Extension Logs ---
+
+
+=== Network Tab Information ===
+- Filter by 'supabase' in Network tab
+- Check if requests are displayed
+- If displayed, copy request details
+- Paste below the separator line
+
+--- Network Tab Information ---
+
+
+=== Other Error Information ===
+- If there are other error messages
+- Paste below the separator line
+
+--- Other Errors ---
+

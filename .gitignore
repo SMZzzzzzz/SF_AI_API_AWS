@@ -37,4 +37,9 @@ build/
 deploy-with-token.bat
 *.key
 *.pem
+current-secrets.txt
+
+# Continue設定（個人固有）
+.continue-config-local.yaml
+continue-config-private.yaml
 
