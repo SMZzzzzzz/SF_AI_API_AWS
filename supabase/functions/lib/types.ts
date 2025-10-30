@@ -65,6 +65,6 @@ export interface AnthropicRequest {
   model: string;
   messages: Array<{ role: string; content: string }>;
   temperature?: number;
-  max_completion_tokens: number;
+  max_tokens: number;
   system?: string;
 }
