@@ -33,6 +33,7 @@ Continue UI (SSEストリーミング)
 - `docs/continue-config-reference.yaml` - Continue設定の参照
 - `docs/CONTINUE_SETUP.md` - Continueセットアップガイド
 - `docs/continue-troubleshooting.md` - トラブルシューティング
+- `docs/aws_llm_proxy_setup.md` - AWS 上での OpenAI 互換 API 構築ガイド（Lambda + API Gateway）
 - `model_map.json` - モデルマッピング設定
 
 ### デプロイ・テスト

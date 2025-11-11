@@ -1,0 +1,123 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: SF AI API - Minimal AWS (single env, low-cost) - API GW + Lambda + S3 + Secrets + CloudWatch
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: prod
+    AllowedValues: [prod]
+    Description: Environment name (single environment)
+  AwsRegion:
+    Type: String
+    Default: ap-northeast-1
+    Description: Deployment region
+  ConfigBucketName:
+    Type: String
+    Default: sfai-prod-config
+    Description: S3 bucket name for configuration files
+  ModelMapKey:
+    Type: String
+    Default: config/model_map.json
+    Description: S3 object key for model_map.json
+  AllowOrigins:
+    Type: String
+    Default: https://app.cursor.sh
+    Description: Comma-separated list of allowed origins for CORS
+  RateLimitQPM:
+    Type: Number
+    Default: 60
+    Description: Soft rate limit (queries per minute) - app-side (API GW throttling recommended)
+  LogMaskPII:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true','false']
+    Description: Whether to mask PII in logs
+  OpenAISecretArn:
+    Type: String
+    Description: Secrets Manager ARN for OPENAI_API_KEY
+  AnthropicSecretArn:
+    Type: String
+    Description: Secrets Manager ARN for ANTHROPIC_API_KEY
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 60
+    MemorySize: 512
+    Tracing: Active
+    Architectures: [x86_64]
+    Environment:
+      Variables:
+        ENV_NAME: !Ref EnvironmentName
+        S3_BUCKET_NAME: !Ref ConfigBucketName
+        MODEL_MAP_KEY: !Ref ModelMapKey
+        ALLOW_ORIGINS: !Ref AllowOrigins
+        RATE_LIMIT_QPM: !Ref RateLimitQPM
+        LOG_MASK_PII: !Ref LogMaskPII
+
+Resources:
+  ConfigBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref ConfigBucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Suspended
+
+  LLMProxyFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub sfai-${EnvironmentName}-llm-proxy
+      Description: OpenAI-compatible proxy for LLM providers (single-env)
+      Handler: src/index.handler
+      CodeUri: ./
+      Events:
+        ChatCompletions:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /chat/completions
+            Method: POST
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: '*'
+            - Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub arn:aws:s3:::${ConfigBucketName}/${ModelMapKey}
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource:
+                - !Ref OpenAISecretArn
+                - !Ref AnthropicSecretArn
+      Environment:
+        Variables:
+          OPENAI_SECRET_ARN: !Ref OpenAISecretArn
+          ANTHROPIC_SECRET_ARN: !Ref AnthropicSecretArn
+
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: $default
+      CorsConfiguration:
+        AllowHeaders: ['*']
+        AllowMethods: ['POST','OPTIONS']
+        AllowOrigins: !Split [',', !Ref AllowOrigins]
+        MaxAge: 86400
+
+  
+
+Outputs:
+  ApiEndpoint:
+    Value: !Sub https://${HttpApi}.execute-api.${AwsRegion}.amazonaws.com/chat/completions
+    Description: API endpoint for chat completions
+
