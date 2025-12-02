@@ -115,7 +115,6 @@ export class SfAiProdStack extends Stack {
       }),
     );
 
-    // API Gateway (existing, kept for backward compatibility - has 30s timeout limit)
     const httpApi = new HttpApi(this, 'ChatCompletionsApi', {
       apiName: `sfai-${environmentName}-chat`,
       corsPreflight: {
@@ -159,27 +158,23 @@ export class SfAiProdStack extends Stack {
 
     new CfnOutput(this, 'ChatApiEndpoint', {
       value: `${httpApi.apiEndpoint}/${stage.stageName}`,
-      description: 'API Gateway endpoint (30s timeout limit)',
+      description: 'API Gateway endpoint',
     });
 
     new CfnOutput(this, 'ChatLambdaName', {
       value: chatLambda.functionName,
     });
 
-    // Lambda Function URL for direct access (bypasses API Gateway 30s timeout, supports up to 15 minutes)
     // Note: InvokeMode is set to RESPONSE_STREAM via AWS CLI for streaming support (SSE)
     // This is required because CDK 2.215.0 doesn't support invokeMode parameter yet
     // To update: aws lambda update-function-url-config --function-name <function-name> --invoke-mode RESPONSE_STREAM
-    // Lambda Function URL - CORS設定は後でAWS CLIで追加可能
     const functionUrl = chatLambda.addFunctionUrl({
       authType: FunctionUrlAuthType.NONE,
-      // Note: CORS設定は早期バリデーションエラーを回避するため一時的に削除
-      // 後でAWS CLIで追加: aws lambda update-function-url-config --function-name <name> --cors '{"AllowOrigins":["https://app.cursor.sh"],"AllowMethods":["POST","OPTIONS"],"AllowHeaders":["content-type","authorization"],"MaxAge":3600}'
     });
 
     new CfnOutput(this, 'ChatFunctionUrl', {
       value: functionUrl.url,
-      description: 'Lambda Function URL endpoint (bypasses API Gateway timeout)',
+      description: 'Lambda Function URL endpoint',
     });
   }
 }

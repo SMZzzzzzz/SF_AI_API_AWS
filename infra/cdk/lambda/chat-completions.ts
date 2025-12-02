@@ -1253,7 +1253,7 @@ export const handler = streamifyResponseFn(
         return;
       }
 
-      // For non-streaming or API Gateway, use internal handler and convert to stream
+      // For non-streaming requests, use internal handler and convert to stream
       const result = await internalHandler(event);
       
       // internalHandler always returns APIGatewayProxyResultV2 object
