@@ -4,7 +4,7 @@ import { Construct } from 'constructs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import { Architecture, Runtime } from 'aws-cdk-lib/aws-lambda';
+import { Architecture, Runtime, FunctionUrlAuthType } from 'aws-cdk-lib/aws-lambda';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import {
@@ -23,6 +23,8 @@ export interface SfAiStackProps extends StackProps {
   readonly rateLimitQpm?: number;
   readonly burstLimit?: number;
   readonly logRetentionDays?: RetentionDays;
+  readonly auditBucketName?: string;
+  readonly auditLogPrefix?: string;
 }
 
 export class SfAiProdStack extends Stack {
@@ -35,6 +37,7 @@ export class SfAiProdStack extends Stack {
     const rateLimitQpm = props?.rateLimitQpm ?? 60;
     const burstLimit = props?.burstLimit ?? 100;
     const logRetention = props?.logRetentionDays ?? RetentionDays.TWO_WEEKS;
+    const auditLogPrefix = props?.auditLogPrefix ?? 'audit';
 
     const configBucket = new s3.Bucket(this, 'ConfigBucket', {
       bucketName: props?.configBucketName,
@@ -42,6 +45,16 @@ export class SfAiProdStack extends Stack {
       encryption: s3.BucketEncryption.S3_MANAGED,
       enforceSSL: true,
       versioned: false,
+      removalPolicy: RemovalPolicy.RETAIN,
+      autoDeleteObjects: false,
+    });
+
+    const auditBucket = new s3.Bucket(this, 'AuditLogBucket', {
+      bucketName: props?.auditBucketName,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+      versioned: true,
       removalPolicy: RemovalPolicy.RETAIN,
       autoDeleteObjects: false,
     });
@@ -67,7 +80,7 @@ export class SfAiProdStack extends Stack {
       runtime: Runtime.NODEJS_20_X,
       architecture: Architecture.X86_64,
       memorySize: 512,
-      timeout: Duration.seconds(30),
+      timeout: Duration.seconds(900), // 15 minutes (max for Lambda Function URL)
       environment: {
         NODE_OPTIONS: '--enable-source-maps',
         S3_BUCKET_NAME: configBucket.bucketName,
@@ -77,11 +90,15 @@ export class SfAiProdStack extends Stack {
         ALLOW_ORIGINS: allowOrigins.join(','),
         RATE_LIMIT_QPM: rateLimitQpm.toString(),
         LOG_MASK_PII: 'false',
+        AUDIT_LOG_BUCKET_NAME: auditBucket.bucketName,
+        AUDIT_LOG_PREFIX: auditLogPrefix,
       },
       bundling: {
         minify: true,
         sourceMap: true,
         target: 'es2022',
+        // Note: aws-lambda is available in Lambda runtime, so we don't need to bundle it
+        // However, we need to use require() at runtime to access streamifyResponse
       },
       logGroup,
     });
@@ -89,6 +106,7 @@ export class SfAiProdStack extends Stack {
     configBucket.grantRead(chatLambda, modelMapKey);
     openAiSecret.grantRead(chatLambda);
     anthropicSecret.grantRead(chatLambda);
+    auditBucket.grantWrite(chatLambda);
 
     chatLambda.addToRolePolicy(
       new iam.PolicyStatement({
@@ -97,6 +115,7 @@ export class SfAiProdStack extends Stack {
       }),
     );
 
+    // API Gateway (existing, kept for backward compatibility - has 30s timeout limit)
     const httpApi = new HttpApi(this, 'ChatCompletionsApi', {
       apiName: `sfai-${environmentName}-chat`,
       corsPreflight: {
@@ -134,12 +153,33 @@ export class SfAiProdStack extends Stack {
       value: configBucket.bucketName,
     });
 
+    new CfnOutput(this, 'AuditLogBucketName', {
+      value: auditBucket.bucketName,
+    });
+
     new CfnOutput(this, 'ChatApiEndpoint', {
       value: `${httpApi.apiEndpoint}/${stage.stageName}`,
+      description: 'API Gateway endpoint (30s timeout limit)',
     });
 
     new CfnOutput(this, 'ChatLambdaName', {
       value: chatLambda.functionName,
+    });
+
+    // Lambda Function URL for direct access (bypasses API Gateway 30s timeout, supports up to 15 minutes)
+    // Note: InvokeMode is set to RESPONSE_STREAM via AWS CLI for streaming support (SSE)
+    // This is required because CDK 2.215.0 doesn't support invokeMode parameter yet
+    // To update: aws lambda update-function-url-config --function-name <function-name> --invoke-mode RESPONSE_STREAM
+    // Lambda Function URL - CORS設定は後でAWS CLIで追加可能
+    const functionUrl = chatLambda.addFunctionUrl({
+      authType: FunctionUrlAuthType.NONE,
+      // Note: CORS設定は早期バリデーションエラーを回避するため一時的に削除
+      // 後でAWS CLIで追加: aws lambda update-function-url-config --function-name <name> --cors '{"AllowOrigins":["https://app.cursor.sh"],"AllowMethods":["POST","OPTIONS"],"AllowHeaders":["content-type","authorization"],"MaxAge":3600}'
+    });
+
+    new CfnOutput(this, 'ChatFunctionUrl', {
+      value: functionUrl.url,
+      description: 'Lambda Function URL endpoint (bypasses API Gateway timeout)',
     });
   }
 }

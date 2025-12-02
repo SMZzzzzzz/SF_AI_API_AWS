@@ -6,9 +6,16 @@ Supabase Edge Functionsを使用したOpenAI互換LLMプロキシAPI。Continue 
 
 ## 現在の状態
 
+### Supabase版
 ✅ **SSEストリーミング実装完了**  
 ✅ **デプロイ済み**  
-✅ **Continue UIで正常動作確認済み**  
+✅ **Continue UIで正常動作確認済み**
+
+### AWS版（CDK）
+✅ **Lambda関数のリファクタリング完了**  
+✅ **CDKスタック定義完了**  
+⏳ **AWS CDKでのデプロイ未実施**  
+📋 **デプロイ計画書**: [`infra/cdk/DEPLOYMENT_PLAN.md`](infra/cdk/DEPLOYMENT_PLAN.md)  
 
 ## アーキテクチャ
 
@@ -37,8 +44,15 @@ Continue UI (SSEストリーミング)
 - `model_map.json` - モデルマッピング設定
 
 ### デプロイ・テスト
-- `deploy.ps1` - デプロイスクリプト
+- `deploy.ps1` - Supabase Edge Functionデプロイスクリプト
+- `infra/cdk/deploy.ps1` - AWS CDKデプロイスクリプト
+- `infra/cdk/check-deployment-status.ps1` - AWS CDKデプロイ状況確認スクリプト
 - `test-*.ps1` - 各種テストスクリプト
+
+### AWS CDKデプロイ関連
+- `infra/cdk/DEPLOYMENT_PLAN.md` - **AWS CDKデプロイ計画書（詳細手順）**
+- `infra/cdk/lib/cdk-stack.ts` - CDKスタック定義
+- `infra/cdk/lambda/chat-completions.ts` - Lambda関数（リファクタリング完了）
 
 ## 重要な技術仕様
 
