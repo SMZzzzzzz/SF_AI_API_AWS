@@ -4,10 +4,6 @@
 .env.*.local
 env.txt
 
-# Supabase
-.supabase/
-supabase/.temp/
-
 # Node modules
 node_modules/
 package-lock.json
@@ -42,4 +38,28 @@ current-secrets.txt
 # Continue設定（個人固有）
 .continue-config-local.yaml
 continue-config-private.yaml
+
+# ログファイル
+*.txt
+!README.txt
+logs.json
+extension-logs_*.txt
+quick-logs_*.txt
+
+# バイナリファイル
+*.exe
+*.tar.gz
+*.zip
+
+# CDK生成ファイル
+cdk.out/
+*.d.ts
+*.js
+!package.json
+!tsconfig.json
+
+# 一時的な設定ファイル
+continue-config-fixed.yaml
+model_map_downloaded.json
+synth-output.txt
 

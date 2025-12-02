@@ -2,27 +2,22 @@
 
 ## 概要
 
-Supabase Edge Functionsを使用したOpenAI互換LLMプロキシAPI。Continue IDE拡張機能と連携し、複数のLLMプロバイダー（OpenAI、Anthropic）を統一的に利用できる。
+AWS Lambda Function URLを使用したOpenAI互換LLMプロキシAPI。Continue IDE拡張機能と連携し、複数のLLMプロバイダー（OpenAI、Anthropic）を統一的に利用できます。最大15分（900秒）のタイムアウト対応とストリーミングレスポンスをサポートします。
 
 ## 現在の状態
 
-### Supabase版
-✅ **SSEストリーミング実装完了**  
+✅ **AWS Lambda Function URL実装完了**  
+✅ **SSEストリーミング実装完了**（`streamifyResponse()`使用）  
 ✅ **デプロイ済み**  
-✅ **Continue UIで正常動作確認済み**
-
-### AWS版（CDK）
-✅ **Lambda関数のリファクタリング完了**  
-✅ **CDKスタック定義完了**  
-⏳ **AWS CDKでのデプロイ未実施**  
-📋 **デプロイ計画書**: [`infra/cdk/DEPLOYMENT_PLAN.md`](infra/cdk/DEPLOYMENT_PLAN.md)  
+✅ **Continue UIで正常動作確認済み**  
+✅ **タイムアウト問題解決**（最大15分対応）  
 
 ## アーキテクチャ
 
 ```
 Continue IDE
     ↓ (OpenAI互換API)
-Supabase Edge Function (llm-proxy-openai)
+AWS Lambda Function URL
     ↓ (ルーティング)
 OpenAI / Anthropic API
     ↓ (レスポンス)
@@ -31,28 +26,19 @@ Continue UI (SSEストリーミング)
 
 ## 主要ファイル
 
-### Supabase Edge Functions
-- `supabase/functions/llm-proxy-openai/index.ts` - メインAPI
-- `supabase/functions/lib/` - 共通ライブラリ
-- `supabase/migrations/` - データベーススキーマ
+### AWS CDK
+- `infra/cdk/lib/cdk-stack.ts` - CDKスタック定義
+- `infra/cdk/lambda/chat-completions.ts` - Lambda関数（メインAPI）
+- `infra/cdk/deploy.ps1` - CDKデプロイスクリプト
+- `infra/cdk/check-deployment-status.ps1` - デプロイ状況確認スクリプト
 
 ### 設定・ドキュメント
 - `docs/continue-config-reference.yaml` - Continue設定の参照
 - `docs/CONTINUE_SETUP.md` - Continueセットアップガイド
-- `docs/continue-troubleshooting.md` - トラブルシューティング
-- `docs/aws_llm_proxy_setup.md` - AWS 上での OpenAI 互換 API 構築ガイド（Lambda + API Gateway）
+- `docs/DEPLOYMENT.md` - デプロイ手順
+- `docs/AWS_SETUP.md` - AWS環境セットアップガイド
+- `docs/TROUBLESHOOTING.md` - トラブルシューティングガイド
 - `model_map.json` - モデルマッピング設定
-
-### デプロイ・テスト
-- `deploy.ps1` - Supabase Edge Functionデプロイスクリプト
-- `infra/cdk/deploy.ps1` - AWS CDKデプロイスクリプト
-- `infra/cdk/check-deployment-status.ps1` - AWS CDKデプロイ状況確認スクリプト
-- `test-*.ps1` - 各種テストスクリプト
-
-### AWS CDKデプロイ関連
-- `infra/cdk/DEPLOYMENT_PLAN.md` - **AWS CDKデプロイ計画書（詳細手順）**
-- `infra/cdk/lib/cdk-stack.ts` - CDKスタック定義
-- `infra/cdk/lambda/chat-completions.ts` - Lambda関数（リファクタリング完了）
 
 ## 重要な技術仕様
 
@@ -67,59 +53,47 @@ Continue UI (SSEストリーミング)
 - `backend_developer` → GPT-5-nano
 - `frontend_architect` → GPT-4o
 - `qa_research` → Claude-3.5-sonnet
-- など
+- など（詳細は`model_map.json`を参照）
 
-### max_tokens動的調整機能
-- **目的**: コスト削減とエラー回避の両立
-- **デフォルト値**: 2000トークン（Continue設定と一致）
-- **動作**:
-  - 入力値：入力履歴の文字数からトークン数を推定（日本語: 1文字≈0.5トークン）
-  - コンテキストウィンドウを考慮して自動調整:
-    - Anthropicモデル: 8192トークン
-    - OpenAI GPT-5系: 128Kトークン
-    - OpenAI その他: 32Kトークン
-  - 安全マージンを確保し、コンテキストウィンドウ超過を防止
-  - 最低保証値:
-    - GPT-5系: 4000トークン（推論トークン考慮）
-    - その他: 1000トークン
-- **実装ファイル**: `supabase/functions/lib/providers.ts`
+### Lambda Function URL
+- 最大15分（900秒）のタイムアウト対応
+- `streamifyResponse()`を使用した真のストリーミングレスポンス
+- API Gatewayの30秒制限を回避
 
 ### ログ・監視
-- `ai_api_logs`テーブルに全リクエスト/レスポンスを記録
-- PIIマスキング対応
-- コスト計算機能
+- CloudWatch Logsに全リクエスト/レスポンスを記録
+- トークン数とコスト計算機能
 
 ## セットアップ
 
-1. **Supabaseプロジェクト設定**
-   ```bash
-   supabase login
-   supabase link --project-ref ndiwsfzozeudtenshwgx
-   ```
+### 1. AWS環境の準備
 
-2. **環境変数設定**
-   - `OPENAI_API_KEY`
-   - `ANTHROPIC_API_KEY`
-   - `SUPABASE_ANON_KEY`
+詳細は`docs/AWS_SETUP.md`を参照してください。
 
-3. **デプロイ**
-   ```powershell
-   .\deploy.ps1
-   ```
+### 2. CDKスタックのデプロイ
 
-4. **Continue設定**
-   - `docs/continue-config-reference.yaml`を参照
-   - `C:\Users\<USER>\.continue\config.yaml`にコピー
+```powershell
+cd infra/cdk
+cdk bootstrap aws://191241815598/ap-northeast-1
+cdk deploy SfAiProdStack --require-approval never
+```
 
-## トラブルシューティング
+詳細は`docs/DEPLOYMENT.md`を参照してください。
 
-- Continue UIに表示されない → `docs/continue-troubleshooting.md`
-- APIエラー → Supabase Functions ログを確認
-- SSE形式確認 → `docs/CONTINUE_SETUP.md`のテストコマンド
+### 3. Continue設定
+
+`docs/continue-config-reference.yaml`を参照し、`C:\Users\<USER>\.continue\config.yaml`に設定をコピーします。
+
+詳細は`docs/CONTINUE_SETUP.md`を参照してください。
+
+## ドキュメント
+
+- [デプロイ手順](docs/DEPLOYMENT.md) - CDKスタックのデプロイ手順
+- [AWS環境セットアップ](docs/AWS_SETUP.md) - AWS環境の構築ガイド
+- [Continue IDE セットアップ](docs/CONTINUE_SETUP.md) - Continue IDEの設定方法
+- [トラブルシューティング](docs/TROUBLESHOOTING.md) - よくある問題と解決方法
 
 ## 更新履歴
 
-- 2025-10-30: Anthropic API対応（バージョン2023-06-01）、max_tokens動的調整機能実装
-- 2025-10-29: SSEストリーミング実装完了、Continue UI表示問題解決
-- 2025-10-28: GPT-5対応、max_tokens調整
-- 2025-10-27: 初期実装、OpenAI互換API構築
+- 2025-12-02: Lambda Function URL追加、`streamifyResponse()`実装、タイムアウト15分対応、ストリーミングレスポンス対応完了
+- 2025-11-11: CDK プロジェクト初期化、スタック定義、Lambda 実装、CloudWatch ログに `latestUserMessage` 等のフィールドを追加
