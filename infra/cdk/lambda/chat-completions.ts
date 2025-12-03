@@ -4,15 +4,13 @@ import {
   APIGatewayProxyResultV2,
   LambdaFunctionURLEvent,
 } from 'aws-lambda';
-// Note: streamifyResponse, ResponseStream, HttpResponseStream, and Context are available
-// in Lambda runtime but may not be in type definitions. We'll use require() at runtime.
+import * as awslambda from 'aws-lambda';
 import {
   SecretsManagerClient,
   GetSecretValueCommand,
 } from '@aws-sdk/client-secrets-manager';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { callLLM, extractTokens, callLLMStreaming } from './providers';
-import { StreamChunk } from './stream-utils';
+import { callLLM, extractTokens } from './providers';
 import {
   buildCorsHeaders,
   calculateCost,
@@ -55,14 +53,7 @@ function normalizeEvent(event: APIGatewayProxyEventV2 | LambdaFunctionURLEvent):
   path: string;
 } {
   // Lambda Function URL event format
-  // Lambda Function URL events have requestContext but NO apiId, routeKey, or stage
-  // API Gateway events have apiId, routeKey, and stage in requestContext
-  const hasApiGatewayFields = 'requestContext' in event && 
-    event.requestContext && 
-    typeof event.requestContext === 'object' &&
-    ('apiId' in event.requestContext || 'routeKey' in event.requestContext || 'stage' in event.requestContext);
-  
-  if ('requestContext' in event && !hasApiGatewayFields) {
+  if ('requestContext' in event && 'http' in event.requestContext === false) {
     const funcUrlEvent = event as LambdaFunctionURLEvent;
     return {
       requestId: funcUrlEvent.requestContext.requestId,
@@ -132,18 +123,6 @@ async function processRequest(
     };
   }
 
-  // Debug: Log all headers to verify what we're receiving (updated 2025-12-03 19:00)
-  logStructured('debug_headers', {
-    requestId: normalized.requestId,
-    timestamp: new Date().toISOString(),
-    allHeaderKeys: Object.keys(normalized.headers || {}),
-    xHeaders: Object.keys(normalized.headers || {}).filter(k => k.toLowerCase().startsWith('x-')),
-    xUserId: headerLookup(normalized.headers, 'x-user-id'),
-    xWindowsUser: headerLookup(normalized.headers, 'x-windows-user'),
-    xMachineName: headerLookup(normalized.headers, 'x-machine-name'),
-    xWindowsAccount: headerLookup(normalized.headers, 'x-windows-account'),
-  });
-  
   const identity = resolveUserIdentity(openAiBody, normalized.headers);
   const requestMeta = resolveRequestMetadata(normalized, event);
   const attachments = collectAttachments(openAiBody);
@@ -165,8 +144,7 @@ async function processRequest(
 
   // Handle streaming requests - we support streaming via SSE emulation
   const streamingRequested = Boolean(openAiBody.stream);
-  // Note: For true streaming, we'll use processRequestStreaming instead
-  // This function is kept for non-streaming requests
+  // Note: We disable streaming for the actual LLM API call, but emulate it in the response
   if (streamingRequested) {
     openAiBody.stream = false;
   }
@@ -323,9 +301,6 @@ async function processRequest(
     userIdSource: identity.source,
     headerUserId: identity.headerUserId,
     bodyUserId: identity.bodyUserId,
-    windowsUser: identity.windowsUser,
-    machineName: identity.machineName,
-    windowsAccount: identity.windowsAccount,
     requestMeta,
     auditLogRef: { bucket: env.auditLogBucketName ?? '', key: 'async' },
     attachments: [],
@@ -366,325 +341,6 @@ async function processRequest(
       requestId,
       role,
     },
-  };
-}
-
-/**
- * Process request with true streaming from LLM API
- * Streams chunks directly from LLM API to client while buffering for audit log
- */
-async function processRequestStreaming(
-  normalized: ReturnType<typeof normalizeEvent>,
-  event: APIGatewayProxyEventV2 | LambdaFunctionURLEvent,
-  openAiBody: OpenAIRequestBody,
-  // @ts-ignore - HttpResponseStream is available in Lambda runtime
-  httpResponseStream: any,
-): Promise<{ success: true; data: { usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } } } | { success: false; error: ProcessRequestError }> {
-  const requestId = normalized.requestId;
-  const env = loadEnvironmentConfig();
-  const origin = headerLookup(normalized.headers, 'origin');
-
-  const messages = openAiBody.messages ?? [];
-  if (!Array.isArray(messages) || messages.length === 0) {
-    return {
-      success: false,
-      error: {
-        statusCode: 400,
-        errorType: 'invalid_request_error',
-        errorMessage: 'messages must be a non-empty array',
-      },
-    };
-  }
-
-  const identity = resolveUserIdentity(openAiBody, normalized.headers);
-  const requestMeta = resolveRequestMetadata(normalized, event);
-  const attachments = collectAttachments(openAiBody);
-  const modelAlias = openAiBody.model ?? 'gpt-4o';
-  const role = resolveRole(modelAlias, messages, normalized.headers);
-
-  if (!checkRateLimit(identity.userId, env.rateLimitQpm)) {
-    return {
-      success: false,
-      error: {
-        statusCode: 429,
-        errorType: 'rate_limit_exceeded',
-        errorMessage: `Rate limit exceeded: ${env.rateLimitQpm} requests per minute`,
-      },
-    };
-  }
-
-  const modelMap = await loadModelMap(env.bucketName, env.modelMapKey);
-  const modelConfig = selectModelConfig(modelMap, role);
-  if (!modelConfig) {
-    return {
-      success: false,
-      error: {
-        statusCode: 400,
-        errorType: 'invalid_request_error',
-        errorMessage: `Invalid role: ${role}`,
-      },
-    };
-  }
-
-  const [openAiApiKey, anthropicApiKey] = await Promise.all([
-    getSecretValue(env.openAiSecretName),
-    getSecretValue(env.anthropicSecretName),
-  ]);
-
-  const temperature = openAiBody.temperature;
-  const maxTokens =
-    openAiBody.max_completion_tokens ?? openAiBody.max_tokens ?? 2000;
-
-  const tempId = `chatcmpl-${randomUUID()}`;
-  const tempModel = modelConfig.model;
-  const tempCreated = Math.floor(Date.now() / 1000);
-
-  // Buffer for audit log
-  let bufferedContent = '';
-  let firstChunk: StreamChunk | null = null;
-  let usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | undefined;
-
-  try {
-    const streamGenerator = callLLMStreaming(
-      modelConfig.provider,
-      modelConfig.model,
-      messages as Message[],
-      openAiApiKey,
-      anthropicApiKey,
-      temperature,
-      maxTokens,
-    );
-
-    // Send initial role chunk
-    httpResponseStream.write(`data: ${JSON.stringify({
-      id: tempId,
-      object: 'chat.completion.chunk',
-      created: tempCreated,
-      model: tempModel,
-      choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
-    })}\n\n`);
-    await new Promise(resolve => setImmediate(resolve));
-
-    // Stream chunks from LLM API
-    let generatorResult: IteratorResult<StreamChunk, { usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }> | undefined;
-    try {
-      let done = false;
-
-      while (!done) {
-        generatorResult = await streamGenerator.next();
-        done = generatorResult.done ?? false;
-
-        if (generatorResult.value && 'choices' in generatorResult.value) {
-          const chunk = generatorResult.value as StreamChunk;
-
-          if (!firstChunk) {
-            firstChunk = chunk;
-          }
-
-          // Extract content and buffer it
-          const content = chunk.choices?.[0]?.delta?.content;
-          if (content) {
-            bufferedContent += content;
-          }
-
-          // Extract usage from final chunk
-          if (chunk.usage) {
-            usage = {
-              prompt_tokens: chunk.usage.prompt_tokens ?? 0,
-              completion_tokens: chunk.usage.completion_tokens ?? 0,
-              total_tokens: chunk.usage.total_tokens ?? 0,
-            };
-          }
-
-          // Forward chunk to client
-          const chunkJson = JSON.stringify(chunk);
-          const chunkData = `data: ${chunkJson}\n\n`;
-          console.log(`Streaming chunk at ${Date.now()}: ${chunkJson.substring(0, 100)}...`);
-          httpResponseStream.write(chunkData);
-          // Ensure chunk is flushed before next write
-          await new Promise(resolve => setImmediate(resolve));
-          await new Promise(resolve => setTimeout(resolve, 10)); // Small delay to ensure flush
-        }
-      }
-
-      // Get final usage from generator return value
-      if (generatorResult && generatorResult.value && 'usage' in generatorResult.value && !('choices' in generatorResult.value)) {
-        const returnValue = generatorResult.value as { usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } };
-        if (returnValue.usage) {
-          usage = returnValue.usage;
-        }
-      }
-    } finally {
-      // Fallback: estimate tokens if usage not provided
-      if (!usage && bufferedContent) {
-        const estimatedTokens = Math.ceil(bufferedContent.length * 0.5);
-        usage = {
-          prompt_tokens: 0, // Will be calculated from messages
-          completion_tokens: estimatedTokens,
-          total_tokens: estimatedTokens,
-        };
-      }
-    }
-
-    // Send [DONE] marker
-    httpResponseStream.write('data: [DONE]\n\n');
-    await new Promise(resolve => setImmediate(resolve));
-
-  } catch (error) {
-    logStructured('llm_error', {
-      requestId,
-      role,
-      provider: modelConfig.provider,
-      model: modelConfig.model,
-      error: (error as Error).message,
-    });
-
-    // Send error in stream format
-    httpResponseStream.write(`data: ${JSON.stringify({
-      id: tempId,
-      object: 'chat.completion.chunk',
-      created: tempCreated,
-      model: tempModel,
-      choices: [{
-        index: 0,
-        delta: {},
-        finish_reason: null,
-      }],
-      error: {
-        message: (error as Error).message,
-        type: 'api_error',
-      },
-    })}\n\n`);
-    httpResponseStream.write('data: [DONE]\n\n');
-    await new Promise(resolve => setImmediate(resolve));
-    httpResponseStream.end();
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    return {
-      success: false,
-      error: {
-        statusCode: 502,
-        errorType: 'api_error',
-        errorMessage: (error as Error).message,
-      },
-    };
-  }
-
-  // Build response body for audit log
-  const responseBody = {
-    id: firstChunk?.id ?? tempId,
-    object: 'chat.completion',
-    created: firstChunk?.created ?? tempCreated,
-    model: firstChunk?.model ?? tempModel,
-    choices: [
-      {
-        index: 0,
-        message: {
-          role: 'assistant',
-          content: bufferedContent,
-        },
-        finish_reason: 'stop',
-      },
-    ],
-    usage: usage ? {
-      prompt_tokens: usage.prompt_tokens,
-      completion_tokens: usage.completion_tokens,
-      total_tokens: usage.total_tokens,
-    } : undefined,
-  };
-
-  // Calculate tokens and cost
-  const tokensIn = usage?.prompt_tokens ?? 0;
-  const tokensOut = usage?.completion_tokens ?? 0;
-  const costUsd = calculateCost(modelConfig.provider, modelConfig.model, tokensIn, tokensOut);
-
-  // Sanitize messages for logging
-  const sanitizedMessages = messages.map((message) => {
-    if (env.logMaskPii) {
-      return {
-        ...message,
-        content: env.logMaskPii ? maskPII(message.content, true) : message.content,
-      };
-    }
-    return message;
-  });
-
-  const responseSnapshot = env.logMaskPii
-    ? maskPII(JSON.stringify(responseBody), true)
-    : responseBody;
-
-  // Persist attachments and audit log asynchronously
-  const attachmentPromise = persistAttachments(
-    env.auditLogBucketName,
-    env.auditLogPrefix,
-    requestId,
-    attachments,
-  );
-
-  const auditLogPromise = attachmentPromise.then((attachmentRefs) =>
-    persistAuditRecord(
-      env.auditLogBucketName,
-      env.auditLogPrefix,
-      requestId,
-      {
-        requestId,
-        timestamp: new Date().toISOString(),
-        role,
-        provider: modelConfig.provider,
-        model: modelConfig.model,
-        identity,
-        requestMeta,
-        attachments: attachmentRefs,
-        request: {
-          modelAlias,
-          temperature,
-          maxTokens,
-          streamingRequested: true,
-          messages: sanitizedMessages,
-        },
-        response: responseSnapshot,
-        usage: {
-          tokensIn,
-          tokensOut,
-          costUsd,
-        },
-      },
-    ),
-  );
-
-  // Log completion
-  const latestUserMessage = messages[messages.length - 1]?.content ?? '';
-  logStructured('chat_completion', {
-    requestId,
-    role,
-    provider: modelConfig.provider,
-    model: modelConfig.model,
-    userId: identity.userId,
-    userIdSource: identity.source,
-    headerUserId: identity.headerUserId,
-    bodyUserId: identity.bodyUserId,
-    windowsUser: identity.windowsUser,
-    machineName: identity.machineName,
-    windowsAccount: identity.windowsAccount,
-    requestMeta,
-    auditLogRef: { bucket: env.auditLogBucketName ?? '', key: 'async' },
-    attachments: [],
-    tokensIn,
-    tokensOut,
-    costUsd,
-    latestUserMessage: latestUserMessage.slice(0, 500),
-    latestUserMessageLength: latestUserMessage.length,
-    contextTailPreview: messages.map(m => m.content).join('\n').slice(-200),
-  });
-
-  // Don't await audit log - let it complete asynchronously
-  auditLogPromise.catch((error) => {
-    console.error('Failed to persist audit log:', error);
-  });
-
-  return {
-    success: true,
-    data: { usage },
   };
 }
 
@@ -976,25 +632,10 @@ function resolveUserIdentity(
   source: 'header' | 'body' | 'default';
   headerUserId?: string;
   bodyUserId?: string;
-  windowsUser?: string;
-  machineName?: string;
-  windowsAccount?: string;
 } {
   const headerUserId = headerLookup(headers, 'x-user-id')?.trim();
   const bodyUserId =
     typeof body.user === 'string' && body.user.trim().length > 0 ? body.user.trim() : undefined;
-  const windowsUser = headerLookup(headers, 'x-windows-user')?.trim();
-  const machineName = headerLookup(headers, 'x-machine-name')?.trim();
-  const windowsAccount = headerLookup(headers, 'x-windows-account')?.trim();
-  
-  // Debug: Log header values for troubleshooting
-  console.log('User identity headers:', {
-    'x-user-id': headerLookup(headers, 'x-user-id'),
-    'x-windows-user': headerLookup(headers, 'x-windows-user'),
-    'x-machine-name': headerLookup(headers, 'x-machine-name'),
-    'x-windows-account': headerLookup(headers, 'x-windows-account'),
-    allHeaders: Object.keys(headers || {}).filter(k => k.toLowerCase().includes('user') || k.toLowerCase().includes('machine') || k.toLowerCase().includes('windows')),
-  });
 
   if (headerUserId) {
     return {
@@ -1002,9 +643,6 @@ function resolveUserIdentity(
       source: 'header',
       headerUserId,
       bodyUserId,
-      windowsUser,
-      machineName,
-      windowsAccount,
     };
   }
 
@@ -1014,9 +652,6 @@ function resolveUserIdentity(
       source: 'body',
       headerUserId,
       bodyUserId,
-      windowsUser,
-      machineName,
-      windowsAccount,
     };
   }
 
@@ -1025,9 +660,6 @@ function resolveUserIdentity(
     source: 'default',
     headerUserId,
     bodyUserId,
-    windowsUser,
-    machineName,
-    windowsAccount,
   };
 }
 
@@ -1326,24 +958,13 @@ function splitContent(content: string, segmentSize = 400): string[] {
 }
 
 // Streaming response handler using streamifyResponse
-// Note: Metadata must be set BEFORE any write operations
 async function sendStreamingResponse(
   responseBody: any,
-  // @ts-ignore - ResponseStream is available in Lambda runtime
-  responseStream: any,
+  // @ts-ignore - ResponseStream may not be in type definitions yet
+  responseStream: awslambda.ResponseStream,
   origin: string | undefined,
   allowOrigins: string[],
 ): Promise<void> {
-  // @ts-ignore - HttpResponseStream is available in Lambda runtime
-  let HttpResponseStream: any;
-  try {
-    HttpResponseStream = require('aws-lambda').HttpResponseStream;
-  } catch {
-    // @ts-ignore
-    HttpResponseStream = (globalThis as any).awslambda?.HttpResponseStream;
-  }
-
-  // IMPORTANT: Metadata must be set BEFORE creating HttpResponseStream
   const metadata = {
     statusCode: 200,
     headers: {
@@ -1354,7 +975,8 @@ async function sendStreamingResponse(
     },
   };
 
-  const httpResponseStream = HttpResponseStream.from(responseStream, metadata);
+  // @ts-ignore - HttpResponseStream may not be in type definitions yet
+  const httpResponseStream = awslambda.HttpResponseStream.from(responseStream, metadata);
 
   try {
     const id = responseBody?.id ?? `chatcmpl-${randomUUID()}`;
@@ -1393,19 +1015,14 @@ async function sendStreamingResponse(
     // 4. End marker
     httpResponseStream.write('data: [DONE]\n\n');
 
-    // 5. End the stream
-    // Note: With streamifyResponse, the handler function must remain active until the stream is complete
-    // The stream will be closed when the handler function completes
     httpResponseStream.end();
-    
-    // Give the stream time to flush before the handler completes
-    await new Promise(resolve => setImmediate(resolve));
+    await httpResponseStream.finished();
   } catch (error) {
     console.error('Streaming error', error);
     try {
       httpResponseStream.write(`data: ${JSON.stringify({ error: { message: (error as Error).message } })}\n\n`);
       httpResponseStream.end();
-      await new Promise(resolve => setImmediate(resolve));
+      await httpResponseStream.finished();
     } catch (endError) {
       console.error('Failed to send error in stream', endError);
     }
@@ -1413,25 +1030,13 @@ async function sendStreamingResponse(
 }
 
 // Main handler with streamifyResponse wrapper
-// Note: streamifyResponse is available in Lambda runtime via aws-lambda module
-// We use a dynamic require at runtime to access it
-let streamifyResponseFn: any;
-try {
-  // @ts-ignore - streamifyResponse is available in Lambda runtime
-  streamifyResponseFn = require('aws-lambda').streamifyResponse;
-} catch {
-  // Fallback: if require fails, we'll use the function directly from global scope
-  // @ts-ignore
-  streamifyResponseFn = (globalThis as any).awslambda?.streamifyResponse;
-}
-
 // @ts-ignore - streamifyResponse may not be in type definitions yet
-export const handler = streamifyResponseFn(
+export const handler = awslambda.streamifyResponse(
   async (
     event: APIGatewayProxyEventV2 | LambdaFunctionURLEvent,
-    // @ts-ignore - ResponseStream is available in Lambda runtime
-    responseStream: any,
-    context: any,
+    // @ts-ignore - ResponseStream may not be in type definitions yet
+    responseStream: awslambda.ResponseStream,
+    context: awslambda.Context,
   ) => {
     const normalized = normalizeEvent(event);
     const requestId = normalized.requestId;
@@ -1452,100 +1057,42 @@ export const handler = streamifyResponseFn(
         openAiBody = null;
       }
 
-      // Debug: Log event structure to verify Function URL detection
-      const hasApiGatewayFields = 'requestContext' in event && 
-        event.requestContext && 
-        typeof event.requestContext === 'object' &&
-        ('apiId' in event.requestContext || 'routeKey' in event.requestContext || 'stage' in event.requestContext);
-      
-      console.log('Event structure check:', {
-        hasRequestContext: 'requestContext' in event,
-        requestContextType: event.requestContext ? typeof event.requestContext : 'undefined',
-        hasHttp: event.requestContext && 'http' in event.requestContext,
-        hasApiId: event.requestContext && 'apiId' in event.requestContext,
-        hasRouteKey: event.requestContext && 'routeKey' in event.requestContext,
-        hasStage: event.requestContext && 'stage' in event.requestContext,
-        hasApiGatewayFields,
-        requestContextKeys: event.requestContext ? Object.keys(event.requestContext) : [],
-      });
-      
-      // Lambda Function URL: has requestContext but NO apiId, routeKey, or stage
-      // API Gateway: has requestContext with apiId, routeKey, and/or stage
-      const isFunctionUrl = 'requestContext' in event && !hasApiGatewayFields;
-      console.log('isFunctionUrl detection result:', isFunctionUrl);
+      const isFunctionUrl = 'requestContext' in event && 'http' in event.requestContext === false;
 
       // For streaming requests via Lambda Function URL, use streaming response
       if (isStreamingRequest && isFunctionUrl && openAiBody !== null) {
         const env = loadEnvironmentConfig();
         const origin = headerLookup(normalized.headers, 'origin');
 
-        // IMPORTANT: Start streaming response immediately to avoid timeout
-        // Set up HttpResponseStream first and send initial chunk
-        // @ts-ignore - HttpResponseStream is available in Lambda runtime
-        let HttpResponseStream: any;
-        try {
-          HttpResponseStream = require('aws-lambda').HttpResponseStream;
-        } catch {
-          // @ts-ignore
-          HttpResponseStream = (globalThis as any).awslambda?.HttpResponseStream;
-        }
-
-        const metadata = {
-          statusCode: 200,
-          headers: {
-            ...buildCorsHeaders(origin, env.allowOrigins),
-            'content-type': 'text/event-stream',
-            'cache-control': 'no-cache',
-            connection: 'keep-alive',
-          },
-        };
-
-        const httpResponseStream = HttpResponseStream.from(responseStream, metadata);
-        console.log('HttpResponseStream created, metadata set:', JSON.stringify(metadata));
-
-        // Send initial role chunk immediately to start the stream
-        const tempId = `chatcmpl-${randomUUID()}`;
-        const tempModel = openAiBody?.model || 'unknown-model';
-        const tempCreated = Math.floor(Date.now() / 1000);
-        const initialChunkTime = Date.now();
-        console.log('Sending initial role chunk at:', new Date(initialChunkTime).toISOString());
-        httpResponseStream.write(`data: ${JSON.stringify({
-          id: tempId,
-          object: 'chat.completion.chunk',
-          created: tempCreated,
-          model: tempModel,
-          choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
-        })}\n\n`);
-        console.log('Initial role chunk written, waiting for flush...');
-        
-        // Ensure the initial chunk is sent before processing
-        await new Promise(resolve => setImmediate(resolve));
-        console.log('Initial chunk flush completed, starting processRequestStreaming...');
-
-        // Process request with true streaming from LLM API
-        const processStartTime = Date.now();
-        console.log('processRequestStreaming started at:', new Date(processStartTime).toISOString());
-        const processResult = await processRequestStreaming(normalized, event, openAiBody, httpResponseStream);
-        const processEndTime = Date.now();
-        console.log('processRequestStreaming completed at:', new Date(processEndTime).toISOString(), 'Duration:', processEndTime - processStartTime, 'ms');
+        // Use shared request processing logic
+        const processResult = await processRequest(normalized, event, openAiBody);
         
         if (!processResult.success) {
-          // Error already sent in processRequestStreaming
+          const errorResponse = createErrorResponse(
+            processResult.error.statusCode,
+            processResult.error.errorType,
+            processResult.error.errorMessage,
+            processResult.origin || undefined,
+            processResult.allowOrigins,
+          );
+          const metadata = {
+            statusCode: (errorResponse as { statusCode: number; headers?: Record<string, string>; body?: string }).statusCode,
+            headers: (errorResponse as { statusCode: number; headers?: Record<string, string>; body?: string }).headers || {},
+          };
+          // @ts-ignore - HttpResponseStream may not be in type definitions yet
+  const httpResponseStream = awslambda.HttpResponseStream.from(responseStream, metadata);
+          httpResponseStream.write((errorResponse as { statusCode: number; headers?: Record<string, string>; body?: string }).body || '');
+          httpResponseStream.end();
+          await httpResponseStream.finished();
           return;
         }
 
-        // End the stream
-        const endStreamTime = Date.now();
-        console.log('Calling httpResponseStream.end() at:', new Date(endStreamTime).toISOString());
-        httpResponseStream.end();
-        // Wait longer to ensure stream is fully flushed
-        await new Promise(resolve => setTimeout(resolve, 100));
-        const streamCompleteTime = Date.now();
-        console.log('Stream completed at:', new Date(streamCompleteTime).toISOString(), 'Total duration:', streamCompleteTime - initialChunkTime, 'ms');
+        const { responseBody } = processResult.data;
+        await sendStreamingResponse(responseBody, responseStream, origin, env.allowOrigins);
         return;
       }
 
-      // For non-streaming requests, use internal handler and convert to stream
+      // For non-streaming or API Gateway, use internal handler and convert to stream
       const result = await internalHandler(event);
       
       // internalHandler always returns APIGatewayProxyResultV2 object
@@ -1556,17 +1103,11 @@ export const handler = streamifyResponseFn(
         headers: resultObj.headers || {},
       };
 
-      // @ts-ignore - HttpResponseStream is available in Lambda runtime
-      let HttpResponseStream: any;
-      try {
-        HttpResponseStream = require('aws-lambda').HttpResponseStream;
-      } catch {
-        // @ts-ignore
-        HttpResponseStream = (globalThis as any).awslambda?.HttpResponseStream;
-      }
-      const httpResponseStream = HttpResponseStream.from(responseStream, metadata);
+      // @ts-ignore - HttpResponseStream may not be in type definitions yet
+      const httpResponseStream = awslambda.HttpResponseStream.from(responseStream, metadata);
       httpResponseStream.write(resultObj.body || '');
       httpResponseStream.end();
+      await httpResponseStream.finished();
     } catch (error) {
       console.error('Handler error', error);
       const normalized = normalizeEvent(event);
@@ -1588,18 +1129,11 @@ export const handler = streamifyResponseFn(
         headers: errorResponseObj.headers || {},
       };
 
-      // @ts-ignore - HttpResponseStream is available in Lambda runtime
-      let HttpResponseStream: any;
-      try {
-        HttpResponseStream = require('aws-lambda').HttpResponseStream;
-      } catch {
-        // @ts-ignore
-        HttpResponseStream = (globalThis as any).awslambda?.HttpResponseStream;
-      }
-      const httpResponseStream = HttpResponseStream.from(responseStream, metadata);
+      // @ts-ignore - HttpResponseStream may not be in type definitions yet
+      const httpResponseStream = awslambda.HttpResponseStream.from(responseStream, metadata);
       httpResponseStream.write(errorResponseObj.body || '');
       httpResponseStream.end();
+      await httpResponseStream.finished();
     }
   },
 );
-
