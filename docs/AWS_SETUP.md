@@ -240,3 +240,6 @@ aws lambda update-function-url-config --function-name $functionName --cors $cors
 - [Continue IDE セットアップガイド](./CONTINUE_SETUP.md)
 - [トラブルシューティングガイド](./TROUBLESHOOTING.md)
 
+
+
+

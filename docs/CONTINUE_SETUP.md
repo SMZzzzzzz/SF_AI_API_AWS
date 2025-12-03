@@ -54,7 +54,37 @@ models:
 - `timeout: 900000`: 15分（900秒）のタイムアウト設定（Lambda Function URL使用時は必須）
 - `Content-Type: application/json`: リクエストヘッダー
 
-### 4. Continue IDEの再起動
+### 4. 環境変数の設定（重要）
+
+Continue IDEの設定ファイルでWindows環境変数を参照するには、`${{ secrets.* }}`形式を使用します。
+
+**設定例:**
+
+```yaml
+requestOptions:
+  headers:
+    "X-User-Id": "${{ secrets.USERNAME }}"
+    "X-Windows-User": "${{ secrets.USERNAME }}"
+    "X-Machine-Name": "${{ secrets.COMPUTERNAME }}"
+    "X-Windows-Account": "${{ secrets.USERDOMAIN }}\\${{ secrets.USERNAME }}"
+```
+
+**Continue IDEの環境変数参照順序:**
+
+Continue IDEは以下の順序で環境変数を解決します：
+
+1. ワークスペース直下 `./.env`
+2. `<workspace-root>/.continue/.env`
+3. `~/.continue/.env`（Windows: `%USERPROFILE%\.continue\.env`）
+4. **Windows のプロセス環境変数** ← `${{ secrets.* }}`で参照
+
+**動作:**
+- Continue IDEが起動時に自動的に環境変数を解決します
+- 各ユーザーがログインするたびに、そのユーザーの環境変数（`USERNAME`、`COMPUTERNAME`、`USERDOMAIN`）が自動的に取得されます
+- 複数のユーザーが同じマシンを使用する場合でも、それぞれのユーザー情報が正しく記録されます
+- **追加のスクリプト実行は不要です**
+
+### 5. Continue IDEの再起動
 
 設定ファイルを保存後、VS Code/Cursorを完全に再起動します。
 

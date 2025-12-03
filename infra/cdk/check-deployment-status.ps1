@@ -178,3 +178,6 @@ Write-Host "  デプロイが未完了の場合:" -ForegroundColor White
 Write-Host "    - .\deploy.ps1 を実行してデプロイ" -ForegroundColor White
 Write-Host ""
 
+
+
+

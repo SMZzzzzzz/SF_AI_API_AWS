@@ -131,6 +131,18 @@ async function processRequest(
     };
   }
 
+  // Debug: Log all headers to verify what we're receiving (updated 2025-12-03 19:00)
+  logStructured('debug_headers', {
+    requestId: normalized.requestId,
+    timestamp: new Date().toISOString(),
+    allHeaderKeys: Object.keys(normalized.headers || {}),
+    xHeaders: Object.keys(normalized.headers || {}).filter(k => k.toLowerCase().startsWith('x-')),
+    xUserId: headerLookup(normalized.headers, 'x-user-id'),
+    xWindowsUser: headerLookup(normalized.headers, 'x-windows-user'),
+    xMachineName: headerLookup(normalized.headers, 'x-machine-name'),
+    xWindowsAccount: headerLookup(normalized.headers, 'x-windows-account'),
+  });
+  
   const identity = resolveUserIdentity(openAiBody, normalized.headers);
   const requestMeta = resolveRequestMetadata(normalized, event);
   const attachments = collectAttachments(openAiBody);
@@ -309,6 +321,9 @@ async function processRequest(
     userIdSource: identity.source,
     headerUserId: identity.headerUserId,
     bodyUserId: identity.bodyUserId,
+    windowsUser: identity.windowsUser,
+    machineName: identity.machineName,
+    windowsAccount: identity.windowsAccount,
     requestMeta,
     auditLogRef: { bucket: env.auditLogBucketName ?? '', key: 'async' },
     attachments: [],
@@ -640,10 +655,25 @@ function resolveUserIdentity(
   source: 'header' | 'body' | 'default';
   headerUserId?: string;
   bodyUserId?: string;
+  windowsUser?: string;
+  machineName?: string;
+  windowsAccount?: string;
 } {
   const headerUserId = headerLookup(headers, 'x-user-id')?.trim();
   const bodyUserId =
     typeof body.user === 'string' && body.user.trim().length > 0 ? body.user.trim() : undefined;
+  const windowsUser = headerLookup(headers, 'x-windows-user')?.trim();
+  const machineName = headerLookup(headers, 'x-machine-name')?.trim();
+  const windowsAccount = headerLookup(headers, 'x-windows-account')?.trim();
+  
+  // Debug: Log header values for troubleshooting
+  console.log('User identity headers:', {
+    'x-user-id': headerLookup(headers, 'x-user-id'),
+    'x-windows-user': headerLookup(headers, 'x-windows-user'),
+    'x-machine-name': headerLookup(headers, 'x-machine-name'),
+    'x-windows-account': headerLookup(headers, 'x-windows-account'),
+    allHeaders: Object.keys(headers || {}).filter(k => k.toLowerCase().includes('user') || k.toLowerCase().includes('machine') || k.toLowerCase().includes('windows')),
+  });
 
   if (headerUserId) {
     return {
@@ -651,6 +681,9 @@ function resolveUserIdentity(
       source: 'header',
       headerUserId,
       bodyUserId,
+      windowsUser,
+      machineName,
+      windowsAccount,
     };
   }
 
@@ -660,6 +693,9 @@ function resolveUserIdentity(
       source: 'body',
       headerUserId,
       bodyUserId,
+      windowsUser,
+      machineName,
+      windowsAccount,
     };
   }
 
@@ -668,6 +704,9 @@ function resolveUserIdentity(
     source: 'default',
     headerUserId,
     bodyUserId,
+    windowsUser,
+    machineName,
+    windowsAccount,
   };
 }
 

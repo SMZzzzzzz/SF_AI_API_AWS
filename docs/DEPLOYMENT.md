@@ -212,3 +212,6 @@ aws logs tail /aws/lambda/SfAiProdStack-ChatCompletionsFunction57B9FADB-... --si
 - [AWS CDK ドキュメント](https://docs.aws.amazon.com/cdk/)
 - [Continue IDE セットアップガイド](./CONTINUE_SETUP.md)
 
+
+
+

@@ -17,10 +17,10 @@ models:
       headers:
         "User-Agent": "continue-client"
         "Content-Type": "application/json"
-        "X-User-Id": "${env:USERNAME}"
-        "X-Windows-User": "${env:USERNAME}"
-        "X-Machine-Name": "${env:COMPUTERNAME}"
-        "X-Windows-Account": "${env:USERDOMAIN}\\${env:USERNAME}"
+        "X-User-Id": "${{ secrets.USERNAME }}"
+        "X-Windows-User": "${{ secrets.USERNAME }}"
+        "X-Machine-Name": "${{ secrets.COMPUTERNAME }}"
+        "X-Windows-Account": "${{ secrets.USERDOMAIN }}\\${{ secrets.USERNAME }}"
 
   - name: "Frontend Architect"
     provider: "openai"
@@ -38,10 +38,10 @@ models:
       headers:
         "User-Agent": "continue-client"
         "Content-Type": "application/json"
-        "X-User-Id": "${env:USERNAME}"
-        "X-Windows-User": "${env:USERNAME}"
-        "X-Machine-Name": "${env:COMPUTERNAME}"
-        "X-Windows-Account": "${env:USERDOMAIN}\\${env:USERNAME}"
+        "X-User-Id": "${{ secrets.USERNAME }}"
+        "X-Windows-User": "${{ secrets.USERNAME }}"
+        "X-Machine-Name": "${{ secrets.COMPUTERNAME }}"
+        "X-Windows-Account": "${{ secrets.USERDOMAIN }}\\${{ secrets.USERNAME }}"
 
   - name: "Frontend Developer"
     provider: "openai"
@@ -59,10 +59,10 @@ models:
       headers:
         "User-Agent": "continue-client"
         "Content-Type": "application/json"
-        "X-User-Id": "${env:USERNAME}"
-        "X-Windows-User": "${env:USERNAME}"
-        "X-Machine-Name": "${env:COMPUTERNAME}"
-        "X-Windows-Account": "${env:USERDOMAIN}\\${env:USERNAME}"
+        "X-User-Id": "${{ secrets.USERNAME }}"
+        "X-Windows-User": "${{ secrets.USERNAME }}"
+        "X-Machine-Name": "${{ secrets.COMPUTERNAME }}"
+        "X-Windows-Account": "${{ secrets.USERDOMAIN }}\\${{ secrets.USERNAME }}"
 
   - name: "Backend Architect"
     provider: "openai"
@@ -80,10 +80,10 @@ models:
       headers:
         "User-Agent": "continue-client"
         "Content-Type": "application/json"
-        "X-User-Id": "${env:USERNAME}"
-        "X-Windows-User": "${env:USERNAME}"
-        "X-Machine-Name": "${env:COMPUTERNAME}"
-        "X-Windows-Account": "${env:USERDOMAIN}\\${env:USERNAME}"
+        "X-User-Id": "${{ secrets.USERNAME }}"
+        "X-Windows-User": "${{ secrets.USERNAME }}"
+        "X-Machine-Name": "${{ secrets.COMPUTERNAME }}"
+        "X-Windows-Account": "${{ secrets.USERDOMAIN }}\\${{ secrets.USERNAME }}"
 
   - name: "Backend Developer"
     provider: "openai"
@@ -101,10 +101,10 @@ models:
       headers:
         "User-Agent": "continue-client"
         "Content-Type": "application/json"
-        "X-User-Id": "${env:USERNAME}"
-        "X-Windows-User": "${env:USERNAME}"
-        "X-Machine-Name": "${env:COMPUTERNAME}"
-        "X-Windows-Account": "${env:USERDOMAIN}\\${env:USERNAME}"
+        "X-User-Id": "${{ secrets.USERNAME }}"
+        "X-Windows-User": "${{ secrets.USERNAME }}"
+        "X-Machine-Name": "${{ secrets.COMPUTERNAME }}"
+        "X-Windows-Account": "${{ secrets.USERDOMAIN }}\\${{ secrets.USERNAME }}"
 
   - name: "QA Research"
     provider: "openai"
@@ -122,10 +122,10 @@ models:
       headers:
         "User-Agent": "continue-client"
         "Content-Type": "application/json"
-        "X-User-Id": "${env:USERNAME}"
-        "X-Windows-User": "${env:USERNAME}"
-        "X-Machine-Name": "${env:COMPUTERNAME}"
-        "X-Windows-Account": "${env:USERDOMAIN}\\${env:USERNAME}"
+        "X-User-Id": "${{ secrets.USERNAME }}"
+        "X-Windows-User": "${{ secrets.USERNAME }}"
+        "X-Machine-Name": "${{ secrets.COMPUTERNAME }}"
+        "X-Windows-Account": "${{ secrets.USERDOMAIN }}\\${{ secrets.USERNAME }}"
 
   - name: "Infrastructure"
     provider: "openai"
@@ -156,7 +156,7 @@ models:
       headers:
         "User-Agent": "continue-client"
         "Content-Type": "application/json"
-        "X-User-Id": "${env:USERNAME}"
-        "X-Windows-User": "${env:USERNAME}"
-        "X-Machine-Name": "${env:COMPUTERNAME}"
-        "X-Windows-Account": "${env:USERDOMAIN}\\${env:USERNAME}"
+        "X-User-Id": "${{ secrets.USERNAME }}"
+        "X-Windows-User": "${{ secrets.USERNAME }}"
+        "X-Machine-Name": "${{ secrets.COMPUTERNAME }}"
+        "X-Windows-Account": "${{ secrets.USERDOMAIN }}\\${{ secrets.USERNAME }}"
