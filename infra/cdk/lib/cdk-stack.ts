@@ -97,8 +97,8 @@ export class SfAiProdStack extends Stack {
         minify: true,
         sourceMap: true,
         target: 'es2022',
+        externalModules: ['aws-lambda'],
         // Note: aws-lambda is available in Lambda runtime, so we don't need to bundle it
-        // However, we need to use require() at runtime to access streamifyResponse
       },
       logGroup,
     });
