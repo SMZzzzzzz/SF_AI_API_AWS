@@ -215,3 +215,5 @@ aws logs tail /aws/lambda/SfAiProdStack-ChatCompletionsFunction57B9FADB-... --si
 
 
 
+
+

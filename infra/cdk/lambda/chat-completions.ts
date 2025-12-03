@@ -11,7 +11,8 @@ import {
   GetSecretValueCommand,
 } from '@aws-sdk/client-secrets-manager';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { callLLM, extractTokens } from './providers';
+import { callLLM, extractTokens, callLLMStreaming } from './providers';
+import { StreamChunk } from './stream-utils';
 import {
   buildCorsHeaders,
   calculateCost,
@@ -164,7 +165,8 @@ async function processRequest(
 
   // Handle streaming requests - we support streaming via SSE emulation
   const streamingRequested = Boolean(openAiBody.stream);
-  // Note: We disable streaming for the actual LLM API call, but emulate it in the response
+  // Note: For true streaming, we'll use processRequestStreaming instead
+  // This function is kept for non-streaming requests
   if (streamingRequested) {
     openAiBody.stream = false;
   }
@@ -364,6 +366,325 @@ async function processRequest(
       requestId,
       role,
     },
+  };
+}
+
+/**
+ * Process request with true streaming from LLM API
+ * Streams chunks directly from LLM API to client while buffering for audit log
+ */
+async function processRequestStreaming(
+  normalized: ReturnType<typeof normalizeEvent>,
+  event: APIGatewayProxyEventV2 | LambdaFunctionURLEvent,
+  openAiBody: OpenAIRequestBody,
+  // @ts-ignore - HttpResponseStream is available in Lambda runtime
+  httpResponseStream: any,
+): Promise<{ success: true; data: { usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } } } | { success: false; error: ProcessRequestError }> {
+  const requestId = normalized.requestId;
+  const env = loadEnvironmentConfig();
+  const origin = headerLookup(normalized.headers, 'origin');
+
+  const messages = openAiBody.messages ?? [];
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return {
+      success: false,
+      error: {
+        statusCode: 400,
+        errorType: 'invalid_request_error',
+        errorMessage: 'messages must be a non-empty array',
+      },
+    };
+  }
+
+  const identity = resolveUserIdentity(openAiBody, normalized.headers);
+  const requestMeta = resolveRequestMetadata(normalized, event);
+  const attachments = collectAttachments(openAiBody);
+  const modelAlias = openAiBody.model ?? 'gpt-4o';
+  const role = resolveRole(modelAlias, messages, normalized.headers);
+
+  if (!checkRateLimit(identity.userId, env.rateLimitQpm)) {
+    return {
+      success: false,
+      error: {
+        statusCode: 429,
+        errorType: 'rate_limit_exceeded',
+        errorMessage: `Rate limit exceeded: ${env.rateLimitQpm} requests per minute`,
+      },
+    };
+  }
+
+  const modelMap = await loadModelMap(env.bucketName, env.modelMapKey);
+  const modelConfig = selectModelConfig(modelMap, role);
+  if (!modelConfig) {
+    return {
+      success: false,
+      error: {
+        statusCode: 400,
+        errorType: 'invalid_request_error',
+        errorMessage: `Invalid role: ${role}`,
+      },
+    };
+  }
+
+  const [openAiApiKey, anthropicApiKey] = await Promise.all([
+    getSecretValue(env.openAiSecretName),
+    getSecretValue(env.anthropicSecretName),
+  ]);
+
+  const temperature = openAiBody.temperature;
+  const maxTokens =
+    openAiBody.max_completion_tokens ?? openAiBody.max_tokens ?? 2000;
+
+  const tempId = `chatcmpl-${randomUUID()}`;
+  const tempModel = modelConfig.model;
+  const tempCreated = Math.floor(Date.now() / 1000);
+
+  // Buffer for audit log
+  let bufferedContent = '';
+  let firstChunk: StreamChunk | null = null;
+  let usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | undefined;
+
+  try {
+    const streamGenerator = callLLMStreaming(
+      modelConfig.provider,
+      modelConfig.model,
+      messages as Message[],
+      openAiApiKey,
+      anthropicApiKey,
+      temperature,
+      maxTokens,
+    );
+
+    // Send initial role chunk
+    httpResponseStream.write(`data: ${JSON.stringify({
+      id: tempId,
+      object: 'chat.completion.chunk',
+      created: tempCreated,
+      model: tempModel,
+      choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
+    })}\n\n`);
+    await new Promise(resolve => setImmediate(resolve));
+
+    // Stream chunks from LLM API
+    let generatorResult: IteratorResult<StreamChunk, { usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }> | undefined;
+    try {
+      let done = false;
+
+      while (!done) {
+        generatorResult = await streamGenerator.next();
+        done = generatorResult.done ?? false;
+
+        if (generatorResult.value && 'choices' in generatorResult.value) {
+          const chunk = generatorResult.value as StreamChunk;
+
+          if (!firstChunk) {
+            firstChunk = chunk;
+          }
+
+          // Extract content and buffer it
+          const content = chunk.choices?.[0]?.delta?.content;
+          if (content) {
+            bufferedContent += content;
+          }
+
+          // Extract usage from final chunk
+          if (chunk.usage) {
+            usage = {
+              prompt_tokens: chunk.usage.prompt_tokens ?? 0,
+              completion_tokens: chunk.usage.completion_tokens ?? 0,
+              total_tokens: chunk.usage.total_tokens ?? 0,
+            };
+          }
+
+          // Forward chunk to client
+          const chunkJson = JSON.stringify(chunk);
+          const chunkData = `data: ${chunkJson}\n\n`;
+          console.log(`Streaming chunk at ${Date.now()}: ${chunkJson.substring(0, 100)}...`);
+          httpResponseStream.write(chunkData);
+          // Ensure chunk is flushed before next write
+          await new Promise(resolve => setImmediate(resolve));
+          await new Promise(resolve => setTimeout(resolve, 10)); // Small delay to ensure flush
+        }
+      }
+
+      // Get final usage from generator return value
+      if (generatorResult && generatorResult.value && 'usage' in generatorResult.value && !('choices' in generatorResult.value)) {
+        const returnValue = generatorResult.value as { usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } };
+        if (returnValue.usage) {
+          usage = returnValue.usage;
+        }
+      }
+    } finally {
+      // Fallback: estimate tokens if usage not provided
+      if (!usage && bufferedContent) {
+        const estimatedTokens = Math.ceil(bufferedContent.length * 0.5);
+        usage = {
+          prompt_tokens: 0, // Will be calculated from messages
+          completion_tokens: estimatedTokens,
+          total_tokens: estimatedTokens,
+        };
+      }
+    }
+
+    // Send [DONE] marker
+    httpResponseStream.write('data: [DONE]\n\n');
+    await new Promise(resolve => setImmediate(resolve));
+
+  } catch (error) {
+    logStructured('llm_error', {
+      requestId,
+      role,
+      provider: modelConfig.provider,
+      model: modelConfig.model,
+      error: (error as Error).message,
+    });
+
+    // Send error in stream format
+    httpResponseStream.write(`data: ${JSON.stringify({
+      id: tempId,
+      object: 'chat.completion.chunk',
+      created: tempCreated,
+      model: tempModel,
+      choices: [{
+        index: 0,
+        delta: {},
+        finish_reason: null,
+      }],
+      error: {
+        message: (error as Error).message,
+        type: 'api_error',
+      },
+    })}\n\n`);
+    httpResponseStream.write('data: [DONE]\n\n');
+    await new Promise(resolve => setImmediate(resolve));
+    httpResponseStream.end();
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    return {
+      success: false,
+      error: {
+        statusCode: 502,
+        errorType: 'api_error',
+        errorMessage: (error as Error).message,
+      },
+    };
+  }
+
+  // Build response body for audit log
+  const responseBody = {
+    id: firstChunk?.id ?? tempId,
+    object: 'chat.completion',
+    created: firstChunk?.created ?? tempCreated,
+    model: firstChunk?.model ?? tempModel,
+    choices: [
+      {
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: bufferedContent,
+        },
+        finish_reason: 'stop',
+      },
+    ],
+    usage: usage ? {
+      prompt_tokens: usage.prompt_tokens,
+      completion_tokens: usage.completion_tokens,
+      total_tokens: usage.total_tokens,
+    } : undefined,
+  };
+
+  // Calculate tokens and cost
+  const tokensIn = usage?.prompt_tokens ?? 0;
+  const tokensOut = usage?.completion_tokens ?? 0;
+  const costUsd = calculateCost(modelConfig.provider, modelConfig.model, tokensIn, tokensOut);
+
+  // Sanitize messages for logging
+  const sanitizedMessages = messages.map((message) => {
+    if (env.logMaskPii) {
+      return {
+        ...message,
+        content: env.logMaskPii ? maskPII(message.content, true) : message.content,
+      };
+    }
+    return message;
+  });
+
+  const responseSnapshot = env.logMaskPii
+    ? maskPII(JSON.stringify(responseBody), true)
+    : responseBody;
+
+  // Persist attachments and audit log asynchronously
+  const attachmentPromise = persistAttachments(
+    env.auditLogBucketName,
+    env.auditLogPrefix,
+    requestId,
+    attachments,
+  );
+
+  const auditLogPromise = attachmentPromise.then((attachmentRefs) =>
+    persistAuditRecord(
+      env.auditLogBucketName,
+      env.auditLogPrefix,
+      requestId,
+      {
+        requestId,
+        timestamp: new Date().toISOString(),
+        role,
+        provider: modelConfig.provider,
+        model: modelConfig.model,
+        identity,
+        requestMeta,
+        attachments: attachmentRefs,
+        request: {
+          modelAlias,
+          temperature,
+          maxTokens,
+          streamingRequested: true,
+          messages: sanitizedMessages,
+        },
+        response: responseSnapshot,
+        usage: {
+          tokensIn,
+          tokensOut,
+          costUsd,
+        },
+      },
+    ),
+  );
+
+  // Log completion
+  const latestUserMessage = messages[messages.length - 1]?.content ?? '';
+  logStructured('chat_completion', {
+    requestId,
+    role,
+    provider: modelConfig.provider,
+    model: modelConfig.model,
+    userId: identity.userId,
+    userIdSource: identity.source,
+    headerUserId: identity.headerUserId,
+    bodyUserId: identity.bodyUserId,
+    windowsUser: identity.windowsUser,
+    machineName: identity.machineName,
+    windowsAccount: identity.windowsAccount,
+    requestMeta,
+    auditLogRef: { bucket: env.auditLogBucketName ?? '', key: 'async' },
+    attachments: [],
+    tokensIn,
+    tokensOut,
+    costUsd,
+    latestUserMessage: latestUserMessage.slice(0, 500),
+    latestUserMessageLength: latestUserMessage.length,
+    contextTailPreview: messages.map(m => m.content).join('\n').slice(-200),
+  });
+
+  // Don't await audit log - let it complete asynchronously
+  auditLogPromise.catch((error) => {
+    console.error('Failed to persist audit log:', error);
+  });
+
+  return {
+    success: true,
+    data: { usage },
   };
 }
 
@@ -1199,89 +1520,21 @@ export const handler = streamifyResponseFn(
         
         // Ensure the initial chunk is sent before processing
         await new Promise(resolve => setImmediate(resolve));
-        console.log('Initial chunk flush completed, starting processRequest...');
+        console.log('Initial chunk flush completed, starting processRequestStreaming...');
 
-        // Now process the request (this may take time)
+        // Process request with true streaming from LLM API
         const processStartTime = Date.now();
-        console.log('processRequest started at:', new Date(processStartTime).toISOString());
-        const processResult = await processRequest(normalized, event, openAiBody);
+        console.log('processRequestStreaming started at:', new Date(processStartTime).toISOString());
+        const processResult = await processRequestStreaming(normalized, event, openAiBody, httpResponseStream);
         const processEndTime = Date.now();
-        console.log('processRequest completed at:', new Date(processEndTime).toISOString(), 'Duration:', processEndTime - processStartTime, 'ms');
+        console.log('processRequestStreaming completed at:', new Date(processEndTime).toISOString(), 'Duration:', processEndTime - processStartTime, 'ms');
         
         if (!processResult.success) {
-          // Send error in stream format
-          httpResponseStream.write(`data: ${JSON.stringify({
-            id: tempId,
-            object: 'chat.completion.chunk',
-            created: tempCreated,
-            model: tempModel,
-            choices: [{
-              index: 0,
-              delta: {},
-              finish_reason: null,
-            }],
-            error: {
-              message: processResult.error.errorMessage,
-              type: processResult.error.errorType,
-            },
-          })}\n\n`);
-          httpResponseStream.write('data: [DONE]\n\n');
-          await new Promise(resolve => setImmediate(resolve));
-          httpResponseStream.end();
-          // Wait longer to ensure stream is fully flushed
-          await new Promise(resolve => setTimeout(resolve, 100));
+          // Error already sent in processRequestStreaming
           return;
         }
 
-        // Send the actual response content
-        const { responseBody } = processResult.data;
-        const id = responseBody?.id ?? tempId;
-        const model = responseBody?.model ?? tempModel;
-        const created = responseBody?.created ?? tempCreated;
-        const choice = responseBody?.choices?.[0] ?? {};
-        const messageContent = choice?.message?.content ?? '';
-
-        const baseChunk = (delta: Record<string, unknown>, finishReason: string | null = null) => ({
-          id,
-          object: 'chat.completion.chunk',
-          created,
-          model,
-          choices: [
-            {
-              index: 0,
-              delta,
-              finish_reason: finishReason,
-            },
-          ],
-        });
-
-        // 2. Content chunks
-        console.log('Starting to send content chunks, messageContent length:', messageContent.length);
-        if (messageContent) {
-          const segments = splitContent(messageContent);
-          console.log('Content split into', segments.length, 'segments');
-          for (let i = 0; i < segments.length; i++) {
-            const segmentStartTime = Date.now();
-            httpResponseStream.write(`data: ${JSON.stringify(baseChunk({ content: segments[i] }))}\n\n`);
-            console.log(`Content chunk ${i + 1}/${segments.length} written at:`, new Date(segmentStartTime).toISOString());
-            // Small delay to ensure chunks are sent
-            await new Promise(resolve => setImmediate(resolve));
-          }
-        }
-
-        // 3. Final chunk with finish_reason
-        const finalChunkTime = Date.now();
-        console.log('Sending final chunk with finish_reason at:', new Date(finalChunkTime).toISOString());
-        httpResponseStream.write(`data: ${JSON.stringify(baseChunk({}, choice?.finish_reason ?? 'stop'))}\n\n`);
-        await new Promise(resolve => setImmediate(resolve));
-
-        // 4. End marker
-        const endMarkerTime = Date.now();
-        console.log('Sending end marker [DONE] at:', new Date(endMarkerTime).toISOString());
-        httpResponseStream.write('data: [DONE]\n\n');
-        await new Promise(resolve => setImmediate(resolve));
-
-        // 5. End the stream
+        // End the stream
         const endStreamTime = Date.now();
         console.log('Calling httpResponseStream.end() at:', new Date(endStreamTime).toISOString());
         httpResponseStream.end();
