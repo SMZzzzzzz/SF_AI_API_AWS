@@ -29,8 +29,8 @@ import {
 const secretsManager = new SecretsManagerClient({});
 const secretCache = new Map<string, string>();
 const rateLimitCache = new Map<string, number[]>();
-// Token-based rate limit cache: userId -> Array<{timestamp: number, tokens: number}>
-const tokenRateLimitCache = new Map<string, Array<{ timestamp: number; tokens: number }>>();
+// Global token rate limit cache: tracks total tokens across all users (Anthropic limit is per organization)
+const globalTokenRateLimitCache: Array<{ timestamp: number; tokens: number }> = [];
 const auditS3Client = new S3Client({});
 
 interface EnvironmentConfig {
@@ -221,20 +221,40 @@ async function processRequest(
       maxTokens,
     );
   } catch (error) {
+    const errorMessage = (error as Error).message;
     logStructured('llm_error', {
       requestId,
       role,
       provider: modelConfig.provider,
       model: modelConfig.model,
-      error: (error as Error).message,
+      error: errorMessage,
     });
+
+    // Check if this is a rate limit error (429) from Anthropic API
+    // Even after retries, if we still get 429, return it as 429 instead of 502
+    const isRateLimitError = errorMessage.includes('429') || 
+                             errorMessage.includes('rate_limit') ||
+                             errorMessage.includes('rate limit');
+    
+    if (isRateLimitError && modelConfig.provider === 'anthropic') {
+      return {
+        success: false,
+        error: {
+          statusCode: 429,
+          errorType: 'rate_limit_exceeded',
+          errorMessage: 'Anthropic API rate limit exceeded. Please try again later.',
+        },
+        origin,
+        allowOrigins: env.allowOrigins,
+      };
+    }
 
     return {
       success: false,
       error: {
         statusCode: 502,
         errorType: 'api_error',
-        errorMessage: (error as Error).message,
+        errorMessage: errorMessage,
       },
       origin,
       allowOrigins: env.allowOrigins,
@@ -642,49 +662,90 @@ function checkRateLimit(userId: string, qpm: number): boolean {
 
 /**
  * Check token-based rate limit for Anthropic API (50,000 input tokens per minute)
+ * The limit is per organization, so we track global usage across all users
  * Returns true if the request can proceed, false if rate limit would be exceeded
  */
 function checkTokenRateLimit(userId: string, estimatedInputTokens: number): boolean {
-  const ANTHROPIC_TOKEN_LIMIT = 50_000; // tokens per minute
+  const ANTHROPIC_TOKEN_LIMIT = 50_000; // tokens per minute (per organization)
   const now = Date.now();
   const oneMinuteAgo = now - 60_000;
 
-  // Get token usage history for this user
-  const tokenHistory = tokenRateLimitCache.get(userId) ?? [];
+  // Check global token usage (across all users) - this is the actual Anthropic limit
+  const recentGlobalTokens = globalTokenRateLimitCache.filter((entry) => entry.timestamp > oneMinuteAgo);
+  const totalGlobalTokensUsed = recentGlobalTokens.reduce((sum, entry) => sum + entry.tokens, 0);
   
-  // Filter to only entries within the last minute
-  const recentTokens = tokenHistory.filter((entry) => entry.timestamp > oneMinuteAgo);
+  // Use 85% of limit as safety margin to account for:
+  // - Estimation inaccuracies
+  // - Concurrent requests from other Lambda instances
+  // - Small timing differences
+  const safeGlobalLimit = Math.floor(ANTHROPIC_TOKEN_LIMIT * 0.85);
   
-  // Calculate total tokens used in the last minute
-  const totalTokensUsed = recentTokens.reduce((sum, entry) => sum + entry.tokens, 0);
-  
-  // Check if adding this request would exceed the limit
-  if (totalTokensUsed + estimatedInputTokens > ANTHROPIC_TOKEN_LIMIT) {
+  if (totalGlobalTokensUsed + estimatedInputTokens > safeGlobalLimit) {
+    logStructured('token_rate_limit_exceeded', {
+      userId,
+      totalGlobalTokensUsed,
+      estimatedInputTokens,
+      wouldExceed: totalGlobalTokensUsed + estimatedInputTokens,
+      limit: ANTHROPIC_TOKEN_LIMIT,
+      safeGlobalLimit,
+    });
     return false;
   }
 
-  // Add this request to the history
-  recentTokens.push({ timestamp: now, tokens: estimatedInputTokens });
-  tokenRateLimitCache.set(userId, recentTokens);
+  // Check passed - add to global cache
+  recentGlobalTokens.push({ timestamp: now, tokens: estimatedInputTokens });
+  // Keep only entries from last 2 minutes to prevent memory growth
+  const twoMinutesAgo = now - 120_000;
+  const filteredGlobal = recentGlobalTokens.filter((entry) => entry.timestamp > twoMinutesAgo);
+  globalTokenRateLimitCache.length = 0;
+  globalTokenRateLimitCache.push(...filteredGlobal);
+  
+  // Log successful check for monitoring
+  logStructured('token_rate_limit_check', {
+    userId,
+    totalGlobalTokensUsed,
+    estimatedInputTokens,
+    limit: ANTHROPIC_TOKEN_LIMIT,
+    safeGlobalLimit,
+  });
   
   return true;
 }
 
 /**
- * Estimate input tokens from messages (same logic as in providers.ts)
+ * Estimate input tokens from messages
+ * Uses a more conservative estimate to account for:
+ * - System message overhead
+ * - Message formatting overhead
+ * - Tokenization differences between languages
+ * - Anthropic API's actual token counting
  */
 function estimateInputTokens(messages: Message[]): number {
   function estimateTokensFromText(text: string): number {
-    return Math.ceil(text.length * 0.5);
+    // More conservative estimate: ~4 characters per token (instead of 2)
+    // This accounts for formatting, special tokens, and language differences
+    return Math.ceil(text.length / 4);
   }
 
   let totalTokens = 0;
+  
+  // Add overhead for message structure (each message has role, content wrapper, etc.)
+  const messageOverhead = 4; // tokens per message for formatting
+  
   for (const msg of messages) {
     if (typeof msg.content === 'string') {
-      totalTokens += estimateTokensFromText(msg.content);
+      totalTokens += estimateTokensFromText(msg.content) + messageOverhead;
     }
   }
-  return totalTokens;
+  
+  // Add system message overhead if present
+  const hasSystemMessage = messages.some(msg => msg.role === 'system');
+  if (hasSystemMessage) {
+    totalTokens += 10; // Additional overhead for system message
+  }
+  
+  // Add safety margin (20% buffer) to account for estimation inaccuracies
+  return Math.ceil(totalTokens * 1.2);
 }
 
 async function getSecretValue(secretName?: string): Promise<string> {
