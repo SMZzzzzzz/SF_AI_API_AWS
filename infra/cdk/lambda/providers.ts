@@ -101,22 +101,53 @@ export async function callAnthropic(
     requestBody.temperature = temperature;
   }
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify(requestBody),
-  });
+  // Retry logic for 429 errors
+  const maxRetries = 3;
+  let lastError: Error | null = null;
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify(requestBody),
+    });
 
-  if (!response.ok) {
+    if (response.ok) {
+      return await response.json();
+    }
+
     const errorText = await response.text();
-    throw new Error(`Anthropic API error: ${response.status} - ${errorText}`);
+    const error = new Error(`Anthropic API error: ${response.status} - ${errorText}`);
+    lastError = error;
+
+    // Only retry on 429 errors
+    if (response.status === 429 && attempt < maxRetries) {
+      // Check for Retry-After header
+      const retryAfter = response.headers.get('retry-after');
+      let waitTime = Math.pow(2, attempt) * 1000; // Exponential backoff: 1s, 2s, 4s
+      
+      if (retryAfter) {
+        const retryAfterSeconds = parseInt(retryAfter, 10);
+        if (!isNaN(retryAfterSeconds)) {
+          waitTime = retryAfterSeconds * 1000;
+        }
+      }
+
+      // Wait before retrying
+      await new Promise((resolve) => setTimeout(resolve, waitTime));
+      continue;
+    }
+
+    // For non-429 errors or after max retries, throw immediately
+    throw error;
   }
 
-  return await response.json();
+  // Should never reach here, but TypeScript needs this
+  throw lastError || new Error('Anthropic API call failed');
 }
 
 export async function callLLM(
@@ -307,19 +338,54 @@ export async function* callAnthropicStreaming(
     requestBody.temperature = temperature;
   }
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify(requestBody),
-  });
+  // Retry logic for 429 errors
+  const maxRetries = 3;
+  let lastError: Error | null = null;
+  let response: Response | null = null;
 
-  if (!response.ok) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (response.ok) {
+      break;
+    }
+
     const errorText = await response.text();
-    throw new Error(`Anthropic API error: ${response.status} - ${errorText}`);
+    const error = new Error(`Anthropic API error: ${response.status} - ${errorText}`);
+    lastError = error;
+
+    // Only retry on 429 errors
+    if (response.status === 429 && attempt < maxRetries) {
+      // Check for Retry-After header
+      const retryAfter = response.headers.get('retry-after');
+      let waitTime = Math.pow(2, attempt) * 1000; // Exponential backoff: 1s, 2s, 4s
+      
+      if (retryAfter) {
+        const retryAfterSeconds = parseInt(retryAfter, 10);
+        if (!isNaN(retryAfterSeconds)) {
+          waitTime = retryAfterSeconds * 1000;
+        }
+      }
+
+      // Wait before retrying
+      await new Promise((resolve) => setTimeout(resolve, waitTime));
+      continue;
+    }
+
+    // For non-429 errors or after max retries, throw immediately
+    throw error;
+  }
+
+  if (!response || !response.ok) {
+    throw lastError || new Error('Anthropic API call failed');
   }
 
   if (!response.body) {

@@ -29,6 +29,8 @@ import {
 const secretsManager = new SecretsManagerClient({});
 const secretCache = new Map<string, string>();
 const rateLimitCache = new Map<string, number[]>();
+// Token-based rate limit cache: userId -> Array<{timestamp: number, tokens: number}>
+const tokenRateLimitCache = new Map<string, Array<{ timestamp: number; tokens: number }>>();
 const auditS3Client = new S3Client({});
 
 interface EnvironmentConfig {
@@ -162,6 +164,40 @@ async function processRequest(
       origin,
       allowOrigins: env.allowOrigins,
     };
+  }
+
+  // Check token-based rate limit for Anthropic API
+  if (modelConfig.provider === 'anthropic') {
+    const estimatedInputTokens = estimateInputTokens(messages as Message[]);
+    if (!checkTokenRateLimit(identity.userId, estimatedInputTokens)) {
+      logStructured('token_rate_limit_exceeded', {
+        requestId,
+        role,
+        provider: modelConfig.provider,
+        model: modelConfig.model,
+        userId: identity.userId,
+        estimatedInputTokens,
+      });
+      return {
+        success: false,
+        error: {
+          statusCode: 429,
+          errorType: 'rate_limit_exceeded',
+          errorMessage: 'Anthropic API token rate limit exceeded: 50,000 input tokens per minute',
+        },
+        origin,
+        allowOrigins: env.allowOrigins,
+      };
+    }
+    // Log token usage for monitoring
+    logStructured('anthropic_token_check', {
+      requestId,
+      role,
+      provider: modelConfig.provider,
+      model: modelConfig.model,
+      userId: identity.userId,
+      estimatedInputTokens,
+    });
   }
 
   const [openAiApiKey, anthropicApiKey] = await Promise.all([
@@ -602,6 +638,53 @@ function checkRateLimit(userId: string, qpm: number): boolean {
   timestamps.push(now);
   rateLimitCache.set(userId, timestamps);
   return true;
+}
+
+/**
+ * Check token-based rate limit for Anthropic API (50,000 input tokens per minute)
+ * Returns true if the request can proceed, false if rate limit would be exceeded
+ */
+function checkTokenRateLimit(userId: string, estimatedInputTokens: number): boolean {
+  const ANTHROPIC_TOKEN_LIMIT = 50_000; // tokens per minute
+  const now = Date.now();
+  const oneMinuteAgo = now - 60_000;
+
+  // Get token usage history for this user
+  const tokenHistory = tokenRateLimitCache.get(userId) ?? [];
+  
+  // Filter to only entries within the last minute
+  const recentTokens = tokenHistory.filter((entry) => entry.timestamp > oneMinuteAgo);
+  
+  // Calculate total tokens used in the last minute
+  const totalTokensUsed = recentTokens.reduce((sum, entry) => sum + entry.tokens, 0);
+  
+  // Check if adding this request would exceed the limit
+  if (totalTokensUsed + estimatedInputTokens > ANTHROPIC_TOKEN_LIMIT) {
+    return false;
+  }
+
+  // Add this request to the history
+  recentTokens.push({ timestamp: now, tokens: estimatedInputTokens });
+  tokenRateLimitCache.set(userId, recentTokens);
+  
+  return true;
+}
+
+/**
+ * Estimate input tokens from messages (same logic as in providers.ts)
+ */
+function estimateInputTokens(messages: Message[]): number {
+  function estimateTokensFromText(text: string): number {
+    return Math.ceil(text.length * 0.5);
+  }
+
+  let totalTokens = 0;
+  for (const msg of messages) {
+    if (typeof msg.content === 'string') {
+      totalTokens += estimateTokensFromText(msg.content);
+    }
+  }
+  return totalTokens;
 }
 
 async function getSecretValue(secretName?: string): Promise<string> {
