@@ -55,7 +55,7 @@ function normalizeEvent(event: APIGatewayProxyEventV2 | LambdaFunctionURLEvent):
   path: string;
 } {
   // Lambda Function URL event format
-  if ('requestContext' in event && 'http' in event.requestContext === false) {
+  if ('requestContext' in event && !('http' in event.requestContext)) {
     const funcUrlEvent = event as LambdaFunctionURLEvent;
     return {
       requestId: funcUrlEvent.requestContext.requestId,
@@ -1160,13 +1160,11 @@ async function sendStreamingResponse(
     httpResponseStream.write('data: [DONE]\n\n');
 
     httpResponseStream.end();
-    await httpResponseStream.finished();
   } catch (error) {
     console.error('Streaming error', error);
     try {
       httpResponseStream.write(`data: ${JSON.stringify({ error: { message: (error as Error).message } })}\n\n`);
       httpResponseStream.end();
-      await httpResponseStream.finished();
     } catch (endError) {
       console.error('Failed to send error in stream', endError);
     }
@@ -1201,7 +1199,7 @@ export const handler = awslambda.streamifyResponse(
         openAiBody = null;
       }
 
-      const isFunctionUrl = 'requestContext' in event && 'http' in event.requestContext === false;
+      const isFunctionUrl = 'requestContext' in event && !('http' in event.requestContext);
 
       // For streaming requests via Lambda Function URL, use streaming response
       if (isStreamingRequest && isFunctionUrl && openAiBody !== null) {
@@ -1227,7 +1225,6 @@ export const handler = awslambda.streamifyResponse(
   const httpResponseStream = awslambda.HttpResponseStream.from(responseStream, metadata);
           httpResponseStream.write((errorResponse as { statusCode: number; headers?: Record<string, string>; body?: string }).body || '');
           httpResponseStream.end();
-          await httpResponseStream.finished();
           return;
         }
 
@@ -1251,7 +1248,6 @@ export const handler = awslambda.streamifyResponse(
       const httpResponseStream = awslambda.HttpResponseStream.from(responseStream, metadata);
       httpResponseStream.write(resultObj.body || '');
       httpResponseStream.end();
-      await httpResponseStream.finished();
     } catch (error) {
       console.error('Handler error', error);
       const normalized = normalizeEvent(event);
@@ -1277,7 +1273,6 @@ export const handler = awslambda.streamifyResponse(
       const httpResponseStream = awslambda.HttpResponseStream.from(responseStream, metadata);
       httpResponseStream.write(errorResponseObj.body || '');
       httpResponseStream.end();
-      await httpResponseStream.finished();
     }
   },
 );
