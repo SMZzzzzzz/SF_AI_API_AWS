@@ -245,3 +245,8 @@ aws lambda update-function-url-config --function-name $functionName --cors $cors
 
 
 
+
+
+
+
+

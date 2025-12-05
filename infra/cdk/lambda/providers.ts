@@ -127,16 +127,23 @@ export async function callAnthropic(
     // Only retry on 429 errors
     if (response.status === 429 && attempt < maxRetries) {
       // Check for Retry-After header
-      const retryAfter = response.headers.get('retry-after');
+      const retryAfter = response.headers.get('retry-after') || response.headers.get('Retry-After');
       let waitTime = Math.pow(2, attempt) * 1000; // Exponential backoff: 1s, 2s, 4s
       
       if (retryAfter) {
         const retryAfterSeconds = parseInt(retryAfter, 10);
-        if (!isNaN(retryAfterSeconds)) {
-          waitTime = retryAfterSeconds * 1000;
+        if (!isNaN(retryAfterSeconds) && retryAfterSeconds > 0) {
+          // Use Retry-After value, but add a small buffer
+          waitTime = (retryAfterSeconds + 1) * 1000;
         }
+      } else {
+        // If no Retry-After header, use longer exponential backoff for token rate limits
+        // Token rate limits typically need more time to reset
+        waitTime = Math.pow(2, attempt + 1) * 1000; // 2s, 4s, 8s
       }
 
+      console.warn(`Anthropic API rate limit hit (429). Retrying in ${waitTime / 1000} seconds... (Attempt ${attempt + 1}/${maxRetries + 1})`);
+      
       // Wait before retrying
       await new Promise((resolve) => setTimeout(resolve, waitTime));
       continue;
@@ -365,16 +372,23 @@ export async function* callAnthropicStreaming(
     // Only retry on 429 errors
     if (response.status === 429 && attempt < maxRetries) {
       // Check for Retry-After header
-      const retryAfter = response.headers.get('retry-after');
+      const retryAfter = response.headers.get('retry-after') || response.headers.get('Retry-After');
       let waitTime = Math.pow(2, attempt) * 1000; // Exponential backoff: 1s, 2s, 4s
       
       if (retryAfter) {
         const retryAfterSeconds = parseInt(retryAfter, 10);
-        if (!isNaN(retryAfterSeconds)) {
-          waitTime = retryAfterSeconds * 1000;
+        if (!isNaN(retryAfterSeconds) && retryAfterSeconds > 0) {
+          // Use Retry-After value, but add a small buffer
+          waitTime = (retryAfterSeconds + 1) * 1000;
         }
+      } else {
+        // If no Retry-After header, use longer exponential backoff for token rate limits
+        // Token rate limits typically need more time to reset
+        waitTime = Math.pow(2, attempt + 1) * 1000; // 2s, 4s, 8s
       }
 
+      console.warn(`Anthropic API rate limit hit (429). Retrying in ${waitTime / 1000} seconds... (Attempt ${attempt + 1}/${maxRetries + 1})`);
+      
       // Wait before retrying
       await new Promise((resolve) => setTimeout(resolve, waitTime));
       continue;
