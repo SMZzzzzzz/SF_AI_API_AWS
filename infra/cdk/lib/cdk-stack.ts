@@ -36,7 +36,7 @@ export class SfAiProdStack extends Stack {
     const allowOrigins = props?.allowOrigins ?? ['https://app.cursor.sh'];
     const rateLimitQpm = props?.rateLimitQpm ?? 60;
     const burstLimit = props?.burstLimit ?? 100;
-    const logRetention = props?.logRetentionDays ?? RetentionDays.TWO_WEEKS;
+    const logRetention = props?.logRetentionDays ?? RetentionDays.THREE_YEARS;
     const auditLogPrefix = props?.auditLogPrefix ?? 'audit';
 
     const configBucket = new s3.Bucket(this, 'ConfigBucket', {
